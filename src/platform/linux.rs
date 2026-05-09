@@ -7,22 +7,21 @@ use tracing::{debug, info, warn};
 
 use super::Platform;
 use super::xkb::XkbTranslator;
+use crate::context::{WordBuffer, is_word_boundary_char};
 
 /// Linux реализация (Wayland-first, X11 не поддерживаем).
 ///
 /// План v0.1 — итерация за итерацией:
 ///   - [x] evdev reader: открыть `/dev/input/event*`, отфильтровать клавиатуры,
 ///         читать events асинхронно, логировать нажатия.
-///   - [x] xkbcommon: keycode → UTF-8 с учётом активной раскладки.    ← **ЭТА ИТЕРАЦИЯ**
-///   - [ ] WordBuffer: накапливать символы, отдавать на word boundary.
+///   - [x] xkbcommon: keycode → UTF-8 с учётом активной раскладки.
+///   - [x] WordBuffer: накапливать символы, отдавать на word boundary.    ← **ЭТА ИТЕРАЦИЯ**
 ///   - [ ] Classifier: hunspell + n-gram → Verdict.
 ///   - [ ] uinput rewriter: BS×N + replacement, EVIOCGRAB во время записи.
 ///   - [ ] zbus: переключение раскладки через KGlobalAccel/Layouts.
 ///
-/// Архитектурное замечание: `xkb::State` содержит raw C pointer и **не Send**.
-/// Поэтому держим один XkbTranslator только в main loop. Reader-задачи шлют
-/// сырые `RawKeyEvent { evdev_code, pressed, kbd_name }` в канал; main loop сам
-/// обновляет xkb state и резолвит UTF-8.
+/// Архитектурное замечание: `xkb::State` не Send. Поэтому держим один XkbTranslator
+/// и WordBuffer только в main loop. Reader-задачи шлют сырые `RawKeyEvent` в канал.
 pub struct LinuxPlatform {
     keyboards: Vec<KeyboardDevice>,
 }
@@ -61,6 +60,7 @@ impl Platform for LinuxPlatform {
 
     async fn run(&self) -> Result<()> {
         let mut xkb = XkbTranslator::new().context("init xkbcommon")?;
+        let mut buffer = WordBuffer::default();
 
         let (tx, mut rx) = mpsc::channel::<RawKeyEvent>(256);
 
@@ -94,35 +94,19 @@ impl Platform for LinuxPlatform {
         drop(tx);
 
         info!("xkb инициализирован (us,ru, grp:alt_space_toggle)");
-        info!("evdev reader запущен. Ctrl+C для выхода. Печатай в любом окне — увижу keycode + glyph + раскладку.");
+        info!("evdev reader запущен. Ctrl+C для выхода. Печатай — на word-boundary будет показано слово.");
 
         loop {
             tokio::select! {
                 Some(ev) = rx.recv() => {
-                    // СЕМАНТИКА: glyph берётся ДО update_key. Для press: glyph валиден,
-                    // обновим state после. Для release: glyph не интересен, просто update.
-                    if ev.pressed {
-                        let utf8 = xkb.key_to_utf8(ev.evdev_code);
-                        let keysym_name = xkb.key_to_keysym_name(ev.evdev_code);
-                        let group = xkb.active_group();
-                        let layout = match group {
-                            0 => "us",
-                            1 => "ru",
-                            _ => "??",
-                        };
-                        debug!(
-                            kbd = %ev.kbd_name,
-                            keycode = ?ev.key,
-                            utf8 = %utf8,
-                            keysym = %keysym_name,
-                            layout,
-                            "key"
-                        );
-                    }
-                    xkb.update_key(ev.evdev_code, ev.pressed);
+                    handle_event(&mut xkb, &mut buffer, &ev);
                 }
                 _ = tokio::signal::ctrl_c() => {
                     info!("получен Ctrl+C, завершаюсь");
+                    if !buffer.is_empty() {
+                        let t = buffer.take();
+                        info!(word = %t.word, layout = %t.layout, "недозавершённое слово на shutdown");
+                    }
                     break;
                 }
             }
@@ -133,6 +117,76 @@ impl Platform for LinuxPlatform {
         }
         Ok(())
     }
+}
+
+/// Главный switch: обновляет xkb state, наполняет/режет WordBuffer, на word-boundary
+/// логирует завершённое слово.
+fn handle_event(xkb: &mut XkbTranslator, buffer: &mut WordBuffer, ev: &RawKeyEvent) {
+    if ev.pressed {
+        // ВАЖНО: glyph и keysym берутся ДО update_key — для нажатого состояния
+        let utf8 = xkb.key_to_utf8(ev.evdev_code);
+        let keysym_name = xkb.key_to_keysym_name(ev.evdev_code);
+        let group = xkb.active_group();
+        let layout = match group {
+            0 => "us",
+            1 => "ru",
+            _ => "??",
+        };
+
+        // Backspace — снимаем последний символ из буфера.
+        // KEY_BACKSPACE = 14 в evdev; keysym_name == "BackSpace".
+        if keysym_name == "BackSpace" {
+            buffer.pop();
+            debug!(buf = %buffer.as_str(), "← backspace");
+            xkb.update_key(ev.evdev_code, true);
+            return;
+        }
+
+        // Решение по utf8: пусто = модификатор/функциональная клавиша → игнор для буфера.
+        if !utf8.is_empty() {
+            // Если первый char строки — boundary char, завершаем слово
+            // (для большинства "видимых" глифов utf8 это **один** char, но space даёт " ").
+            let mut chars = utf8.chars();
+            if let Some(first) = chars.next() {
+                if is_word_boundary_char(first) {
+                    if !buffer.is_empty() {
+                        let t = buffer.take();
+                        info!(
+                            word = %t.word,
+                            layout_started = %t.layout,
+                            current_layout = layout,
+                            boundary = %first.escape_debug().to_string(),
+                            "WORD"
+                        );
+                    }
+                } else {
+                    buffer.push(first, layout);
+                    // Если в utf8 ещё символы (composed input в будущем) — игнор для v0.1
+                }
+            }
+
+            debug!(
+                kbd = %ev.kbd_name,
+                keycode = ?ev.key,
+                utf8 = %utf8,
+                keysym = %keysym_name,
+                layout,
+                buf = %buffer.as_str(),
+                "key"
+            );
+        } else {
+            debug!(
+                kbd = %ev.kbd_name,
+                keycode = ?ev.key,
+                keysym = %keysym_name,
+                layout,
+                "key (no glyph)"
+            );
+        }
+    }
+
+    // Update xkb state в любом случае (press или release) для modifier/group bookkeeping.
+    xkb.update_key(ev.evdev_code, ev.pressed);
 }
 
 #[derive(Debug)]
