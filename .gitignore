@@ -1,0 +1,14 @@
+/target
+Cargo.lock.bak
+*.profraw
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Bundled GGUF models (download via scripts, not in git)
+/models/*.gguf
+
+# Local config / cache
+/.matea-local/
