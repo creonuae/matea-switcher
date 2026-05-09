@@ -3,6 +3,8 @@ use async_trait::async_trait;
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "linux")]
+mod xkb;
 
 /// Platform abstraction. Реализаций три (по таргетам):
 /// - Linux: evdev/uinput + KWin DBus + AT-SPI
@@ -11,8 +13,12 @@ mod linux;
 ///
 /// Ядро (классификатор/LLM/маппер) платформо-независимое и общается с Platform
 /// через этот trait.
-#[async_trait]
-pub trait Platform: Send + Sync {
+///
+/// `#[async_trait(?Send)]` — позволяет держать non-Send state (например xkb::State)
+/// прямо в платформной impl. tokio запущен в `flavor = "current_thread"`, поэтому
+/// Send-bound на future не нужен.
+#[async_trait(?Send)]
+pub trait Platform {
     /// Человеческое имя для логов.
     fn name(&self) -> &'static str;
 

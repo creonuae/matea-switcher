@@ -2,19 +2,27 @@ use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use evdev::{Device, EventSummary, KeyCode};
 use std::path::PathBuf;
+use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use super::Platform;
+use super::xkb::XkbTranslator;
 
 /// Linux реализация (Wayland-first, X11 не поддерживаем).
 ///
 /// План v0.1 — итерация за итерацией:
 ///   - [x] evdev reader: открыть `/dev/input/event*`, отфильтровать клавиатуры,
-///         читать events асинхронно, логировать нажатия.  ← **ЭТА ИТЕРАЦИЯ**
+///         читать events асинхронно, логировать нажатия.
+///   - [x] xkbcommon: keycode → UTF-8 с учётом активной раскладки.    ← **ЭТА ИТЕРАЦИЯ**
 ///   - [ ] WordBuffer: накапливать символы, отдавать на word boundary.
 ///   - [ ] Classifier: hunspell + n-gram → Verdict.
 ///   - [ ] uinput rewriter: BS×N + replacement, EVIOCGRAB во время записи.
 ///   - [ ] zbus: переключение раскладки через KGlobalAccel/Layouts.
+///
+/// Архитектурное замечание: `xkb::State` содержит raw C pointer и **не Send**.
+/// Поэтому держим один XkbTranslator только в main loop. Reader-задачи шлют
+/// сырые `RawKeyEvent { evdev_code, pressed, kbd_name }` в канал; main loop сам
+/// обновляет xkb state и резолвит UTF-8.
 pub struct LinuxPlatform {
     keyboards: Vec<KeyboardDevice>,
 }
@@ -45,15 +53,16 @@ impl LinuxPlatform {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Platform for LinuxPlatform {
     fn name(&self) -> &'static str {
         "linux (Wayland)"
     }
 
     async fn run(&self) -> Result<()> {
-        // Каждой клавиатуре — свою задачу. tokio mpsc-канал собирает события в один поток.
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<KeyEvent>(256);
+        let mut xkb = XkbTranslator::new().context("init xkbcommon")?;
+
+        let (tx, mut rx) = mpsc::channel::<RawKeyEvent>(256);
 
         let mut devices: Vec<KeyboardDevice> = self
             .keyboards
@@ -64,7 +73,6 @@ impl Platform for LinuxPlatform {
                 device: None,
             })
             .collect();
-
         for kb in devices.iter_mut() {
             let dev = Device::open(&kb.path)
                 .with_context(|| format!("открыть {}", kb.path.display()))?;
@@ -85,18 +93,33 @@ impl Platform for LinuxPlatform {
         }
         drop(tx);
 
-        info!("evdev reader запущен. Нажми Ctrl+C для выхода. Печатай в любом окне — события будут логироваться.");
+        info!("xkb инициализирован (us,ru, grp:alt_space_toggle)");
+        info!("evdev reader запущен. Ctrl+C для выхода. Печатай в любом окне — увижу keycode + glyph + раскладку.");
 
-        // Главный loop: либо событие от клавиатуры (логируем), либо Ctrl+C (выходим).
         loop {
             tokio::select! {
                 Some(ev) = rx.recv() => {
-                    debug!(
-                        kbd = %ev.kbd_name,
-                        key = ?ev.key,
-                        state = if ev.pressed { "↓" } else { "↑" },
-                        "key"
-                    );
+                    // СЕМАНТИКА: glyph берётся ДО update_key. Для press: glyph валиден,
+                    // обновим state после. Для release: glyph не интересен, просто update.
+                    if ev.pressed {
+                        let utf8 = xkb.key_to_utf8(ev.evdev_code);
+                        let keysym_name = xkb.key_to_keysym_name(ev.evdev_code);
+                        let group = xkb.active_group();
+                        let layout = match group {
+                            0 => "us",
+                            1 => "ru",
+                            _ => "??",
+                        };
+                        debug!(
+                            kbd = %ev.kbd_name,
+                            keycode = ?ev.key,
+                            utf8 = %utf8,
+                            keysym = %keysym_name,
+                            layout,
+                            "key"
+                        );
+                    }
+                    xkb.update_key(ev.evdev_code, ev.pressed);
                 }
                 _ = tokio::signal::ctrl_c() => {
                     info!("получен Ctrl+C, завершаюсь");
@@ -113,9 +136,10 @@ impl Platform for LinuxPlatform {
 }
 
 #[derive(Debug)]
-struct KeyEvent {
+struct RawKeyEvent {
     kbd_name: String,
     key: KeyCode,
+    evdev_code: u16,
     pressed: bool,
 }
 
@@ -123,7 +147,7 @@ async fn read_keyboard(
     device: Device,
     name: String,
     path: PathBuf,
-    tx: tokio::sync::mpsc::Sender<KeyEvent>,
+    tx: mpsc::Sender<RawKeyEvent>,
 ) -> Result<()> {
     debug!("listening on {}", path.display());
     let mut stream = device
@@ -139,15 +163,15 @@ async fn read_keyboard(
             if value == 0 || value == 1 {
                 let pressed = value == 1;
                 if tx
-                    .send(KeyEvent {
+                    .send(RawKeyEvent {
                         kbd_name: name.clone(),
                         key,
+                        evdev_code: key.code(),
                         pressed,
                     })
                     .await
                     .is_err()
                 {
-                    // receiver gone — main loop вышел
                     break;
                 }
             }
@@ -156,8 +180,6 @@ async fn read_keyboard(
     Ok(())
 }
 
-/// Найти клавиатуры через evdev: filter by EV_KEY supported и наличие keycode KEY_A
-/// (грубо, но достаточно — клавиатура без буквы A это не клавиатура).
 async fn discover_keyboards() -> Result<Vec<KeyboardDevice>> {
     let mut found = Vec::new();
     for (path, dev) in evdev::enumerate() {

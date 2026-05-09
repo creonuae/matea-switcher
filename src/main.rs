@@ -6,7 +6,10 @@ mod context;
 mod mapper;
 mod platform;
 
-#[tokio::main]
+// current-thread runtime: одна нить async-event-loop. Нам этого достаточно
+// (event-driven, мало CPU-bound работы), и это убирает Send-требование на future,
+// что позволяет держать non-Send типы (например, `xkb::State`) прямо в state.
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     init_tracing();
     info!("MaTea v{} starting", env!("CARGO_PKG_VERSION"));

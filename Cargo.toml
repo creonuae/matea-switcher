@@ -25,6 +25,7 @@ directories = "5"
 evdev = { version = "0.13", features = ["tokio"] }
 nix = { version = "0.29", features = ["fs", "ioctl"] }
 zbus = { version = "5", default-features = false, features = ["tokio"] }
+xkbcommon = "0.8"
 
 # llama.cpp wrapper — добавим в v0.2 когда будем встраивать LLM. Пока закомменчено.
 # llama_cpp_2 = "0.1"
