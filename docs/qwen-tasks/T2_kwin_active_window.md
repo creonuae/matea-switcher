@@ -1,5 +1,21 @@
 # T2 — KWin DBus active-window detection (закрывает AT-SPI слепоту к Konsole)
 
+> **ПРЕЖДЕ ЧЕМ КОДИТЬ:** прочитай `docs/qwen-tasks/README.md` секцию
+> «Уроки T1 iteration #1 (REJECTED)» — там 6 граблей которые нельзя
+> повторять (method placement, imports, TODO в коммите, branch-only,
+> ложь про тесты, HEREDOC).
+>
+> **Branch:** `qwen-T2-kwin-active-window` (создать от свежего main
+> где T1 v2 уже merged как commit `81dc387`).
+>
+> **Pre-push checklist:**
+> 1. `cargo build --release 2>&1 | grep -E '^error'` — пусто.
+> 2. `cargo test 2>&1 | tail -3` — `N passed; 0 failed`.
+> 3. Никаких `use foo::bar` если `foo` отсутствует в Cargo.toml.
+> 4. Все `pub fn` методы — на уровне `impl` блока.
+> 5. Commit message через HEREDOC, **фактическое** число тестов.
+
+
 ## Контекст
 
 В M6 (`src/platform/atspi.rs`) реализован listener AT-SPI focus events

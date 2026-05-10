@@ -1,5 +1,20 @@
 # T3 — Manual flip-last-word hotkey (Ctrl+Shift+L)
 
+> **ПРЕЖДЕ ЧЕМ КОДИТЬ:** прочитай `docs/qwen-tasks/README.md` секцию
+> «Уроки T1 iteration #1 (REJECTED)» — там 6 граблей которые нельзя
+> повторять.
+>
+> **Branch:** `qwen-T3-manual-flip` (создать от свежего main где T1 v2
+> уже merged как commit `81dc387`).
+>
+> **Pre-push checklist:**
+> 1. `cargo build --release 2>&1 | grep -E '^error'` — пусто.
+> 2. `cargo test 2>&1 | tail -3` — `N passed; 0 failed`.
+> 3. Все `pub fn` методы — на уровне `impl` блока.
+> 4. Commit message через HEREDOC, **фактическое** число тестов.
+> 5. Никаких "TODO" в реализации — если фича объявлена, она работает.
+
+
 ## Контекст
 
 В smoke M6 юзер заметил что `руддщ` (на ru-раскладке) **не флипнулся** в

@@ -28,6 +28,46 @@
 
 Все три задачи **независимы** — Qwen может генерить параллельно.
 
+## Уроки T1 iteration #1 (REJECTED) — НЕ ПОВТОРЯТЬ
+
+T1 первая попытка была отклонена и revert'нута (commit `cc813d1` →
+`b70ce5e`). Iteration #2 (`81dc387`) принят. Грабли которые нужно НЕ
+повторять в T2/T3:
+
+1. **Method placement:** `pub fn foo(&mut self, ...)` ОБЯЗАТЕЛЬНО на
+   уровне `impl` блока, **не вложенно** в другие методы. В iteration #1
+   `set_active_layout` оказался внутри `new()` — 4 ошибки компиляции
+   из-за `&mut self` в nested fn.
+2. **Imports = только из Cargo.toml.** В iteration #1 Qwen дописал
+   `use futures_util::Stream;` — крейта нет в зависимостях. Используй
+   **`futures_lite`** (есть). Перед добавлением `use` проверь:
+   `grep -E '^[a-z]+\s*=' Cargo.toml | head -30`.
+3. **"TODO в коммите" = REJECT.** Если не доделал — либо доделай,
+   либо явно скажи в commit-message что **намеренно** не сделал и
+   почему. iteration #1 ловко обошёл «signal subscription declared but
+   not started» — это не закрывает баг, не приемлемо.
+4. **Branch only, не main.** iteration #1 закоммитил в main —
+   пришлось `git revert` + push. Используй `git checkout -b qwen-Tx-...`
+   с самого начала.
+5. **Never lie про cargo test.** В iteration #1 commit message говорил
+   «cargo test 44/44 ok» — на самом деле тесты не запускались (код
+   не компилировался). Если cargo test не зелёный — НЕ commit, НЕ
+   push. Пиши **фактическое** число прошедших тестов.
+6. **HEREDOC для commit message.** В iteration #1 был literal `\n\n`
+   в одной строке — нечитаемо в git log. Формат:
+   ```bash
+   git commit -m "$(cat <<'EOF'
+   feat(scope): что
+   
+   - детали построчно
+   - что ещё
+   EOF
+   )"
+   ```
+
+Всё это **уже дублировано в T1_v2_iteration_after_review.md** (детально
+с цитатами кривого кода). Прочитай его если будешь делать T2 или T3.
+
 ## Универсальные правила для Qwen (везде)
 
 1. **Без `Co-Authored-By: AI`** в коммите. Без `🤖 Generated with...`.
