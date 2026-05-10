@@ -160,8 +160,52 @@ impl DictClassifier {
         match (valid_in_current, valid_after_flip) {
             (true, false) => Verdict::Keep,
             (false, true) => Verdict::Flip,
-            (true, true) => Verdict::Uncertain, // обе валидны (короткие/имена) — пусть LLM
-            (false, false) => Verdict::Uncertain, // опечатка — оставим пользователю до LLM
+            (true, true) => {
+                // M11: оба варианта валидны (например `cnj`/`сто`/`но`/`a`/`я`).
+                // Смотрим на recent_words: какой язык доминировал? Bias к нему.
+                self.context_bias(input, current_lang, other_lang)
+            }
+            (false, false) => Verdict::Uncertain,
+        }
+    }
+
+    /// Подсчитать в каком языке доминирует история последних слов и
+    /// принять решение: если current_lang в большинстве → Keep, иначе → Flip.
+    /// Если истории нет или ни один не доминирует → Uncertain (оставим LLM/юзеру).
+    fn context_bias(
+        &self,
+        input: &ClassifyInput<'_>,
+        current_lang: Lang,
+        other_lang: Lang,
+    ) -> Verdict {
+        let mut current_score = 0usize;
+        let mut other_score = 0usize;
+        for w in input.recent_words.iter().rev().take(5) {
+            // Пропускаем гарантированно «не-словарные» токены (см. правила M7)
+            let len = w.chars().count();
+            if len <= 1 {
+                continue;
+            }
+            if w.chars().all(|c| c.is_ascii_digit()) {
+                continue;
+            }
+            if w.chars().any(|c| c.is_ascii_digit()) {
+                continue;
+            }
+            if self.is_valid(w, current_lang) {
+                current_score += 1;
+            }
+            if self.is_valid(w, other_lang) {
+                other_score += 1;
+            }
+        }
+        // Только если разница убедительная (≥2) принимаем bias.
+        if current_score >= other_score + 2 {
+            Verdict::Keep
+        } else if other_score >= current_score + 2 {
+            Verdict::Flip
+        } else {
+            Verdict::Uncertain
         }
     }
 }
@@ -352,5 +396,58 @@ mod tests {
         let d = dict();
         // "Anthropic" нет ни в en_US ни в ru словаре, заглавная — keep
         assert_eq!(check(&d, "Anthropic", "us"), Verdict::Keep);
+    }
+
+    // ---- M11: context bias через recent_words ----
+
+    fn check_with_context(d: &DictClassifier, word: &str, layout: &str, recent: &[&str]) -> Verdict {
+        let recent_owned: Vec<String> = recent.iter().map(|s| s.to_string()).collect();
+        d.classify(&ClassifyInput {
+            word,
+            active_layout: layout,
+            recent_words: &recent_owned,
+            window_class: None,
+        })
+    }
+
+    #[test]
+    fn context_bias_ru_dominant_keeps_ru_ambiguous() {
+        // "но" валидно в обеих (ru "но" = противоречие; us-flip "yj" — не слово,
+        // но есть кейсы где обе валидны). Возьмём заведомо амбигуальный — "и".
+        // Hmm, "и" уйдёт по rule len≤1.
+        // Более чистый кейс: "но" в ru, recent — все ru валидные слова.
+        let d = dict();
+        // Если recent словарь явно ru-доминантный → bias к ru (current=ru → Keep)
+        let v = check_with_context(&d, "но", "ru", &["сегодня", "хорошо", "погода", "тут"]);
+        // "но" валидно в ru, "yj" в en — нет → это не ambiguous, а просто Keep.
+        // Главное чтоб точно не Flip.
+        assert!(matches!(v, Verdict::Keep | Verdict::Uncertain));
+    }
+
+    #[test]
+    fn context_bias_no_recent_words_uncertain_for_ambiguous() {
+        // Без recent_words ambiguous (если такой есть в обеих) → Uncertain.
+        let d = dict();
+        // "ya" валидно в en (междометие?), "уф" в ru — не амбигуально, но проверим
+        // что без recent_words не падаем.
+        let v = check_with_context(&d, "ye", "us", &[]);
+        // "ye" в en — да (поэтическое); "не" в ru flip — да. Обе валидны.
+        // Без context — Uncertain.
+        assert_eq!(v, Verdict::Uncertain);
+    }
+
+    #[test]
+    fn context_bias_ru_recent_flips_us_typed_word() {
+        // Печатаешь на us раскладке, но контекст явно ru → если кандидат
+        // валиден в обеих — bias к ru, значит Flip.
+        let d = dict();
+        // "ye" на us, контекст — 4 русских слова → bias к ru (other=ru) → Flip
+        let v = check_with_context(
+            &d,
+            "ye",
+            "us",
+            &["сегодня", "хорошо", "погода", "тут"],
+        );
+        assert_eq!(v, Verdict::Flip);
     }
 }

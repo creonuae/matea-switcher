@@ -440,6 +440,16 @@ on KWin activeWindowChanged(new_window):
 
 ---
 
+## Milestone 11 ✅ — context bias через recent_words
+
+**Статус:** done на 2026-05-10. Когда Hunspell-проверка возвращает «обе
+раскладки валидны» (раньше → Uncertain), теперь смотрим на 5 последних
+слов (через `WordHistory` в main loop) и biased к доминирующему языку.
+Margin ≥ 2 для решения, иначе Uncertain.
+
+Детально — [`docs/milestones/M11_context_bias.md`](milestones/M11_context_bias.md).
+25/25 unit-тестов зелёные.
+
 ## Открытые вопросы (на потом)
 
 - **Newton (Wayland-native a11y)** — в разработке. Когда станет stable, AT-SPI

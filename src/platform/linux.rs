@@ -11,7 +11,7 @@ use super::kwin::KwinLayout;
 use super::uinput::Rewriter;
 use super::xkb::XkbTranslator;
 use crate::classifier::{ClassifyInput, DictClassifier, Verdict};
-use crate::context::{WordBuffer, is_word_boundary_char};
+use crate::context::{WordBuffer, WordHistory, is_word_boundary_char};
 
 /// Linux реализация (Wayland-first).
 ///
@@ -62,6 +62,7 @@ impl Platform for LinuxPlatform {
     async fn run(&self) -> Result<()> {
         let mut xkb = XkbTranslator::new().context("init xkbcommon")?;
         let mut buffer = WordBuffer::default();
+        let mut history = WordHistory::new(10);
         let classifier = DictClassifier::new_default()
             .context("init Hunspell словарей (en_US + ru_RU)")?;
         info!("classifier готов: en_US + ru_RU словари загружены");
@@ -126,7 +127,7 @@ impl Platform for LinuxPlatform {
                         buffer.take();
                         continue;
                     }
-                    if let Err(e) = handle_event(&mut xkb, &mut buffer, &classifier, &mut rewriter, &kwin, &ev, enabled).await {
+                    if let Err(e) = handle_event(&mut xkb, &mut buffer, &mut history, &classifier, &mut rewriter, &kwin, &ev, enabled).await {
                         warn!("handle_event error: {e:#}");
                     }
                 }
@@ -155,6 +156,7 @@ impl Platform for LinuxPlatform {
 async fn handle_event(
     xkb: &mut XkbTranslator,
     buffer: &mut WordBuffer,
+    history: &mut WordHistory,
     classifier: &DictClassifier,
     rewriter: &mut Rewriter,
     kwin: &KwinLayout,
@@ -185,10 +187,12 @@ async fn handle_event(
                 if is_word_boundary_char(first) {
                     if !buffer.is_empty() {
                         let t = buffer.take();
+                        // M11: передаём контекст последних слов для bias на ambiguous case
+                        let recent: Vec<String> = history.recent().cloned().collect();
                         let verdict = classifier.classify(&ClassifyInput {
                             word: &t.word,
                             active_layout: &t.layout,
-                            recent_words: &[],
+                            recent_words: &recent,
                             window_class: None,
                         });
                         let flipped = match t.layout.as_str() {
@@ -213,9 +217,16 @@ async fn handle_event(
                         if matches!(verdict, Verdict::Flip) {
                             if enabled {
                                 do_flip(rewriter, kwin, &t).await?;
+                                // После flip — добавим в history именно flipped (юзер
+                                // будет видеть это слово, и контекст должен это отражать).
+                                history.push(flipped.clone());
                             } else {
                                 debug!(word = %t.word, "FLIP suppressed (matea disabled)");
+                                history.push(t.word.clone());
                             }
+                        } else {
+                            // Keep / Uncertain — в history идёт оригинал что юзер ввёл.
+                            history.push(t.word.clone());
                         }
                     }
                 } else {
