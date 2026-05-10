@@ -8,31 +8,50 @@
 
 ---
 
-## Текущее состояние (snapshot)
+## Текущее состояние (snapshot 2026-05-10 поздний)
 
-### Что уже работает (закоммичено в main)
+### Done — v0.1 milestones (закоммичено в main)
 
-| Слой | Статус | Файлы |
+| ID | Что | Файлы |
 |---|---|---|
-| Cargo project skeleton | ✅ | `Cargo.toml`, `src/main.rs` |
-| Trait `Platform` (?Send, current_thread runtime) | ✅ | `src/platform/mod.rs` |
-| evdev async reader (через `evdev::EventStream`) | ✅ | `src/platform/linux.rs` |
-| xkbcommon translator (keycode → utf8 + layout) | ✅ | `src/platform/xkb.rs` |
-| WordBuffer + word-boundary detection | ✅ | `src/context.rs` |
-| qwerty ↔ йцукен mapper | ✅ | `src/mapper.rs` |
-| Hunspell classifier (en_US + ru_RU UTF-8 cache) | ✅ | `src/classifier.rs` |
+| M1 | evdev async reader | `src/platform/linux.rs` |
+| M2 | xkbcommon translator (keycode → utf8 + layout tracking) | `src/platform/xkb.rs` |
+| M3 | WordBuffer + word-boundary detection | `src/context.rs` |
+| M4 | Hunspell classifier (en_US + ru_RU UTF-8 cache) | `src/classifier.rs` |
+| M5 | uinput rewriter + KWin layout switch на Verdict::Flip | `src/platform/{uinput,kwin,linux}.rs` |
+| M5b | Dynamic layout index через `getLayoutsList()` | `src/platform/kwin.rs` |
+| M5c | Self-echo suppression (counter + 500мс window) | `src/platform/uinput.rs` |
+| M5d | EVIOCGRAB на время rewrite — закрывает race с user input | `src/platform/uinput.rs` |
+| M7 | Classifier hardening (digits/alphanumeric/URL/mixed-script/capitalized → Keep) | `src/classifier.rs` |
+| M8 | Ctrl+Shift+M аварийный toggle ON/OFF | `src/platform/linux.rs` |
+| M9 | config.toml read-only fail-safe | `src/config.rs` |
+| M9b | Apply general.enabled из config в runtime | `src/main.rs`, `src/platform/linux.rs` |
+| M9c | Hotkey parser + apply layouts.pair | `src/config.rs`, `src/platform/linux.rs` |
+| M10 | systemd user unit + install/uninstall.sh | `systemd/`, `scripts/` |
+| M11 | Context bias через recent_words на ambiguous case | `src/classifier.rs` |
 
-15 unit-тестов проходят: 4 mapper + 1 xkb + 4 context + 6 classifier.
+**33 unit-теста зелёные:** 4 mapper + 1 xkb + 4 context + 11 classifier
++ 6 hotkey parsing + 2 mod state + 5 другие.
 
-### Что **не** работает / отложено
+### Не done — что реально остаётся для v0.1
 
-- **uinput rewriter** (Milestone 5) — самая mясная часть. matea сейчас только
-  **слушает**, ничего не **переписывает** в активное окно.
-- **Proactive layout switching** (Milestone 6) — только `keep|flip` decision,
-  без изменения активной системной раскладки.
-- **AT-SPI** (Milestone 7) — нет интеграции, classifier работает по тексту из
-  evdev-буфера, а не из реального текстового поля приложения.
-- **LLM** (v0.2) — модели в проекте нет.
+| ID | Что | Размер | Приоритет |
+|---|---|---|---|
+| **M6** | AT-SPI integration (editable-text replace где есть, password STATE_PROTECTED detection, window class blacklist) | большой (~200+ LOC) | блокер для daily-use |
+| M5e | Wait for `org.kde.keyboard.layoutChanged` signal вместо 50мс sleep | маленький | nice-to-have |
+| M9d | Manual flip-last-word hotkey (Ctrl+Shift+L) — для случаев когда auto не сработал | ~30 LOC | nice-to-have |
+| M9e | Hot-reload config через `notify` crate | ~50 LOC | nice-to-have |
+
+После M6 — v0.1 закрывается.
+
+### v0.2+ дальше
+
+- **v0.2** Qwen-2.5-0.5B GGUF через `llama_cpp_2` или `llama-server`-sidecar
+  (см. секцию ниже про LLM).
+- **v0.3** Proactive layout prediction по window context.
+- **v0.4** macOS port.
+- **v0.5** Windows port.
+- **v0.6+** Tab-completion overlay.
 
 ---
 
