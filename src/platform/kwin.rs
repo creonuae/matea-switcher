@@ -23,14 +23,24 @@ use anyhow::{Context, Result};
 use tracing::debug;
 use zbus::{Connection, proxy};
 
+/// zbus по дефолту конвертирует Rust `fn fooBar` → DBus `FooBar` (PascalCase).
+/// KDE же использует camelCase (`setLayout`, `getLayout`) — поэтому каждой
+/// функции нужен явный `name = "..."` атрибут. Открыли это smoke-тестом 2026-05-10:
+/// без `name` падало с `org.freedesktop.DBus.Error.UnknownMethod: SetLayout`.
 #[proxy(
     interface = "org.kde.KeyboardLayouts",
     default_service = "org.kde.keyboard",
     default_path = "/Layouts"
 )]
 trait KeyboardLayouts {
-    fn getLayout(&self) -> zbus::Result<u32>;
-    fn setLayout(&self, index: u32) -> zbus::Result<bool>;
+    #[zbus(name = "getLayout")]
+    fn get_layout(&self) -> zbus::Result<u32>;
+
+    #[zbus(name = "setLayout")]
+    fn set_layout(&self, index: u32) -> zbus::Result<bool>;
+
+    #[zbus(name = "switchToNextLayout")]
+    fn switch_to_next_layout(&self) -> zbus::Result<()>;
 }
 
 pub struct KwinLayout {
@@ -50,7 +60,7 @@ impl KwinLayout {
 
     /// Текущий активный layout index (0 = первый в LayoutList = us, 1 = ru).
     pub async fn current(&self) -> Result<u32> {
-        self.proxy.getLayout().await.context("getLayout")
+        self.proxy.get_layout().await.context("getLayout")
     }
 
     /// Переключить активный layout. Возвращает true если успешно.
@@ -58,6 +68,12 @@ impl KwinLayout {
     /// keycodes лучше дождаться следующего tick'а или коротко поспать (~30мс).
     pub async fn set(&self, index: u32) -> Result<bool> {
         debug!(index, "KWin: setLayout");
-        self.proxy.setLayout(index).await.context("setLayout")
+        self.proxy.set_layout(index).await.context("setLayout")
+    }
+
+    /// Switch to next в LayoutList. Простая альтернатива set(target_index)
+    /// если у нас 2 layouts и достаточно «другая».
+    pub async fn switch_next(&self) -> Result<()> {
+        self.proxy.switch_to_next_layout().await.context("switchToNextLayout")
     }
 }
