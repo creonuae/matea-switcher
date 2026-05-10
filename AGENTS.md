@@ -16,14 +16,15 @@
   контексту.
 - **Язык:** Rust 2024. Не Go, не Python, не C++ — обоснование в
   `docs/NEXT_STEPS.md` («Текущее состояние» + commit message `init`).
-- **Текущий статус:** v0.1 milestones M1-M5 + M5b + M7 + M8 + M11 готовы:
-  evdev reader, xkbcommon, WordBuffer, Hunspell classifier с hardening rules,
-  uinput rewriter + dynamic KWin layout switch, аварийный Ctrl+Shift+M toggle,
-  context-bias через recent_words. Следующий milestone — **M6: AT-SPI
-  integration** (editable-text вместо backspace где есть, password fields
-  detection, window class blacklist). Пока нет M6, для аварийной остановки
-  переписывания — **Ctrl+Shift+M** (matea продолжит читать клавиатуру и
-  логировать verdict, но FLIP-action будет пропущен).
+- **Текущий статус v0.1:** done — M1 (evdev), M2 (xkbcommon), M3 (WordBuffer),
+  M4 (Hunspell classifier), M5 (uinput rewriter + KWin layout switch),
+  M5b (dynamic layout index), M7 (classifier hardening), M8 (Ctrl+Shift+M
+  toggle), M9 (минимальный config.toml), M11 (context bias через recent_words).
+  Не done: **M6** (AT-SPI — editable-text + password detection + window
+  blacklist), M5c (wait for signal + EVIOCGRAB), M9b (реально применить
+  config-поля), M10 (systemd unit). Следующий приоритет — **M6**.
+- **Аварийный stop**: пока нет M6, для остановки rewrite — **Ctrl+Shift+M**.
+  matea продолжит логировать verdict, но FLIP-action будет пропущен.
 - **15/15 unit-тестов зелёные.** `cargo test` после `cargo build --release`.
 
 ## Карта документов

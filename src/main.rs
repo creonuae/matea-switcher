@@ -2,6 +2,7 @@ use anyhow::Result;
 use tracing::info;
 
 mod classifier;
+mod config;
 mod context;
 mod mapper;
 mod platform;
@@ -14,13 +15,8 @@ async fn main() -> Result<()> {
     init_tracing();
     info!("MaTea v{} starting", env!("CARGO_PKG_VERSION"));
 
-    // v0.1 roadmap внутри:
-    //   1) open /dev/input/event* via evdev (нужна группа input)
-    //   2) accumulate word buffer on key events
-    //   3) on word boundary → classifier (Hunspell + n-gram)
-    //   4) if `flip` → grab input, write backspace×N + corrected text via uinput
-    //
-    // Пока — wire up trait Platform и вернуть заглушку.
+    let cfg = config::load()?;
+    info!(?cfg, "config loaded");
 
     let platform = platform::current().await?;
     info!("platform: {}", platform.name());
