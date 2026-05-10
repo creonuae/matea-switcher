@@ -23,9 +23,11 @@
   M7 (classifier hardening), M8 (Ctrl+Shift+M toggle),
   M9 + M9b + M9c (config.toml + apply general.enabled + hotkey parsing +
   layouts.pair), M10 (systemd user unit + install/uninstall),
-  M11 (context bias). **v0.1 закрыт по основным фичам.** Дальше — v0.2 (LLM
-  через Qwen-2.5-0.5B GGUF для disambiguation Uncertain'ов и proactive
-  prediction по screen context, см. `docs/NEXT_STEPS.md → v0.2`).
+  M11 (context bias). **v0.1 закрыт по основным фичам.** Дальше — v0.2 LLM (Qwen-2.5-0.5B GGUF
+  через llama-server sidecar) для disambiguation Uncertain'ов и proactive
+  layout prediction по screen-context. Полный план в
+  [`docs/v02_llm_plan.md`](docs/v02_llm_plan.md) — milestone'ы M1-M6 v0.2,
+  стек обоснован, prompt template зафиксирован, latency бюджет.
 - **Аварийный stop**: пока нет M6, для остановки rewrite — **Ctrl+Shift+M**.
   matea продолжит логировать verdict, но FLIP-action будет пропущен.
 - **M5d EVIOCGRAB** реализован — на время `do_flip` грабим клавиатуры,
