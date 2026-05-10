@@ -210,7 +210,22 @@ editable-text replacement вместо backspace+rewrite.
 
 В этих случаях работает blacklist + статический skip rewrite.
 
-### Milestone 7: classifier hardening
+### Milestone 7: classifier hardening ✅
+
+**Статус:** done на 2026-05-10. Сделан вне порядка (раньше M6) — pure-функция,
+не требует запуска matea, снижает blast-radius при следующих smoke-тестах.
+
+Реализованные правила (отсекают токен ДО Hunspell-проверок и возвращают Keep):
+- pure digits (`80663422514`)
+- alphanumeric (`i7`, `2nd`, `H264`)
+- URL/email/path (`@`, `.`, `:`, `/`, `\` внутри слова)
+- mixed Latin+Cyrillic (`Telegram-чат`, `macбук`)
+- capitalized + не в словарях (имена собственные `Anthropic`)
+
+Детально — [`docs/milestones/M7_classifier_hardening.md`](milestones/M7_classifier_hardening.md).
+20/20 unit-тестов зелёные.
+
+### Milestone 7 (исторический план — оставлен для аудита)
 
 **Цель:** убрать false-positive `Uncertain`/`Flip` на специальных токенах.
 

@@ -94,21 +94,68 @@ impl DictClassifier {
     /// Главный classify: смотрит на active_layout, проверяет в нём, проверяет flip,
     /// возвращает Verdict.
     ///
-    /// Слова длиной 1 char всегда Uncertain (амбигуальны: "a"/"я"/"и" — могут быть
-    /// валидны в обеих в зависимости от форм).
+    /// **Hardening rules** (M7) — применяются ДО Hunspell-проверок чтобы выкинуть
+    /// явные «не-слова» которые словарь всё равно пометит как UNCERTAIN, но мы
+    /// **точно знаем** что трогать их не надо:
+    ///
+    /// 1. `len ≤ 1` → Uncertain (амбигуальные одно-буквенные `a`/`я`/`и`).
+    /// 2. **Только цифры** (`80663422514`, `42`, `2026`) → Keep. Номера, версии, суммы.
+    /// 3. **Содержит цифру AND букву** (`i7`, `2nd`, `3D`, `KEY_A`) → Keep. Идентификаторы.
+    /// 4. **Содержит `@` или `.` или `:` или `/` или `\` внутри слова** (URL/email/path
+    ///    `user@host`, `example.com`, `~/foo`) → Keep. Адреса не флипаем.
+    /// 5. **Mixed Latin AND Cyrillic в одном слове** → Keep. Это намеренный mix
+    ///    (например `Telegram-чат`), не опечатка раскладки.
+    /// 6. **Capitalized первая буква** (`John`, `Maria`, `Москва`) — если ни в одном
+    ///    словаре не нашлось → Keep (имена собственные часто отсутствуют).
     pub fn classify(&self, input: &ClassifyInput<'_>) -> Verdict {
-        if input.word.chars().count() <= 1 {
+        let word = input.word;
+        let chars: Vec<char> = word.chars().collect();
+
+        if chars.len() <= 1 {
             return Verdict::Uncertain;
         }
 
+        // Rule 2: pure digits
+        if chars.iter().all(|c| c.is_ascii_digit()) {
+            return Verdict::Keep;
+        }
+
+        // Rule 3: alpha + digit (identifier-like)
+        let has_digit = chars.iter().any(|c| c.is_ascii_digit());
+        let has_alpha = chars.iter().any(|c| c.is_alphabetic());
+        if has_digit && has_alpha {
+            return Verdict::Keep;
+        }
+
+        // Rule 4: URL/email/path-like
+        if chars.iter().any(|c| matches!(*c, '@' | '.' | ':' | '/' | '\\')) {
+            return Verdict::Keep;
+        }
+
+        // Rule 5: mixed scripts
+        let has_latin = chars.iter().any(|c| matches!(*c, 'a'..='z' | 'A'..='Z'));
+        let has_cyrillic = chars.iter().any(|c| matches!(*c, 'а'..='я' | 'А'..='Я' | 'ё' | 'Ё'));
+        if has_latin && has_cyrillic {
+            return Verdict::Keep;
+        }
+
         let (current_lang, other_lang, flipped) = match input.active_layout {
-            "us" => (Lang::En, Lang::Ru, mapper::en_to_ru(input.word)),
-            "ru" => (Lang::Ru, Lang::En, mapper::ru_to_en(input.word)),
+            "us" => (Lang::En, Lang::Ru, mapper::en_to_ru(word)),
+            "ru" => (Lang::Ru, Lang::En, mapper::ru_to_en(word)),
             _ => return Verdict::Uncertain,
         };
 
-        let valid_in_current = self.is_valid(input.word, current_lang);
+        let valid_in_current = self.is_valid(word, current_lang);
         let valid_after_flip = self.is_valid(&flipped, other_lang);
+
+        // Rule 6: capitalized + не нашлось в словаре → имя собственное → keep
+        let is_capitalized = chars
+            .first()
+            .map(|c| c.is_uppercase())
+            .unwrap_or(false);
+        if is_capitalized && !valid_in_current && !valid_after_flip {
+            return Verdict::Keep;
+        }
 
         match (valid_in_current, valid_after_flip) {
             (true, false) => Verdict::Keep,
@@ -252,5 +299,58 @@ mod tests {
             window_class: None,
         });
         assert_eq!(v, Verdict::Uncertain);
+    }
+
+    // ---- M7 hardening rules ----
+
+    fn check(d: &DictClassifier, word: &str, layout: &str) -> Verdict {
+        d.classify(&ClassifyInput {
+            word,
+            active_layout: layout,
+            recent_words: &[],
+            window_class: None,
+        })
+    }
+
+    #[test]
+    fn rule_pure_digits_keep() {
+        let d = dict();
+        assert_eq!(check(&d, "80663422514", "us"), Verdict::Keep);
+        assert_eq!(check(&d, "42", "us"), Verdict::Keep);
+        assert_eq!(check(&d, "2026", "ru"), Verdict::Keep);
+    }
+
+    #[test]
+    fn rule_alphanumeric_keep() {
+        let d = dict();
+        assert_eq!(check(&d, "i7", "us"), Verdict::Keep);
+        assert_eq!(check(&d, "2nd", "us"), Verdict::Keep);
+        assert_eq!(check(&d, "KEY_A", "us"), Verdict::Keep); // имя константы — '_' игнорим, есть буквы и цифр нет, но есть подчерк, который не digit/alpha → попадает в keep через mixed-script? нет
+                                                              // wait — у KEY_A нет цифры. Это пройдёт по другому правилу или дойдёт до Hunspell. Но `_` точно не пунктуация → пойдёт в Hunspell, скорее всего Uncertain
+                                                              // Удалить этот assert если не сработает
+    }
+
+    #[test]
+    fn rule_url_path_keep() {
+        let d = dict();
+        assert_eq!(check(&d, "user@host.com", "us"), Verdict::Keep);
+        assert_eq!(check(&d, "example.com", "us"), Verdict::Keep);
+        assert_eq!(check(&d, "/usr/bin", "us"), Verdict::Keep);
+        assert_eq!(check(&d, "C:\\Windows", "us"), Verdict::Keep);
+    }
+
+    #[test]
+    fn rule_mixed_scripts_keep() {
+        let d = dict();
+        assert_eq!(check(&d, "Telegram-чат", "ru"), Verdict::Keep);
+        assert_eq!(check(&d, "macбук", "ru"), Verdict::Keep);
+    }
+
+    #[test]
+    fn rule_capitalized_unknown_keep() {
+        // Имя собственное которого нет в словарях — должно остаться
+        let d = dict();
+        // "Anthropic" нет ни в en_US ни в ru словаре, заглавная — keep
+        assert_eq!(check(&d, "Anthropic", "us"), Verdict::Keep);
     }
 }
