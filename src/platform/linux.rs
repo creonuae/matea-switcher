@@ -259,13 +259,22 @@ async fn handle_event(
 ///   4. Re-emit keycodes — те же физические клавиши даём в новой раскладке,
 ///      получаем корректный текст в активном окне.
 async fn do_flip(rewriter: &mut Rewriter, kwin: &KwinLayout, t: &crate::context::TakenWord) -> Result<()> {
-    let target_index: u32 = match t.layout.as_str() {
-        "us" => 1,  // ru — assuming kxkbrc LayoutList = ru,us... но typically [0]=us,[1]=ru
-        "ru" => 0,
-        _ => {
-            warn!(layout = %t.layout, "do_flip: unknown layout, skip");
+    // Определяем target_layout по парам, потом ищем его реальный индекс
+    // в kxkbrc через KwinLayout (M5b — больше не hardcode).
+    let target_name = match t.layout.as_str() {
+        "us" => "ru",
+        "ru" => "us",
+        other => {
+            warn!(layout = %other, "do_flip: неизвестная раскладка, skip");
             return Ok(());
         }
+    };
+    let Some(target_index) = kwin.index_of(target_name) else {
+        warn!(
+            target = %target_name,
+            "do_flip: target раскладка отсутствует в KWin LayoutList — добавь её в System Settings → Keyboard"
+        );
+        return Ok(());
     };
 
     info!(

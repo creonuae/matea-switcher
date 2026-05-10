@@ -20,7 +20,8 @@
 //!     re-emit бы дал тот же текст. Нужно дёргать именно KWin'овский layout.
 
 use anyhow::{Context, Result};
-use tracing::debug;
+use std::collections::HashMap;
+use tracing::{debug, info};
 use zbus::{Connection, proxy};
 
 /// zbus по дефолту конвертирует Rust `fn fooBar` → DBus `FooBar` (PascalCase).
@@ -41,10 +42,20 @@ trait KeyboardLayouts {
 
     #[zbus(name = "switchToNextLayout")]
     fn switch_to_next_layout(&self) -> zbus::Result<()>;
+
+    /// Возвращает список layouts: `[(short_name, display_name, long_name), ...]`.
+    /// `short_name` — это xkb-layout name (`us`, `ru`, `de`, ...).
+    /// Индекс в массиве == индекс который ждёт setLayout.
+    #[zbus(name = "getLayoutsList")]
+    fn get_layouts_list(&self) -> zbus::Result<Vec<(String, String, String)>>;
 }
 
 pub struct KwinLayout {
     proxy: KeyboardLayoutsProxy<'static>,
+    /// Карта `xkb-layout-name → index в LayoutList`. Дёрнутая один раз на старте
+    /// через `getLayoutsList()`. `do_flip` использует её чтобы найти target_index
+    /// по имени ("ru" / "us"), а не hard-code'ить порядок.
+    name_to_index: HashMap<String, u32>,
 }
 
 impl KwinLayout {
@@ -55,7 +66,31 @@ impl KwinLayout {
         let proxy = KeyboardLayoutsProxy::new(&conn)
             .await
             .context("zbus: create org.kde.keyboard proxy")?;
-        Ok(Self { proxy })
+        let layouts = proxy
+            .get_layouts_list()
+            .await
+            .context("zbus: getLayoutsList")?;
+        let mut name_to_index = HashMap::new();
+        for (i, (short, _display, _long)) in layouts.iter().enumerate() {
+            info!(
+                index = i,
+                short = %short,
+                display = %_display,
+                long = %_long,
+                "KWin layout"
+            );
+            name_to_index.insert(short.clone(), i as u32);
+        }
+        Ok(Self {
+            proxy,
+            name_to_index,
+        })
+    }
+
+    /// Найти индекс layout по xkb-имени ("us", "ru", "de", ...). None если
+    /// у юзера такой раскладки нет в kxkbrc.
+    pub fn index_of(&self, name: &str) -> Option<u32> {
+        self.name_to_index.get(name).copied()
     }
 
     /// Текущий активный layout index (0 = первый в LayoutList = us, 1 = ru).
