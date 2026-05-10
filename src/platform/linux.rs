@@ -72,6 +72,15 @@ impl Platform for LinuxPlatform {
             .context("init KWin layout DBus client")?;
         info!("rewriter и kwin DBus готовы — переписывание включено");
 
+        // M8: глобальный enabled-flag и tracking modifier-state. Aварийный
+        // hotkey Ctrl+Shift+M toggle'ит rewrite ON/OFF (classifier продолжает
+        // работать и логировать, но FLIP-action пропускается). Если matea сходит
+        // с ума или попадаешь в окно где она опасна — нажми Ctrl+Shift+M.
+        let mut enabled: bool = true;
+        let mut ctrl_pressed = false;
+        let mut shift_pressed = false;
+        info!("hotkey: Ctrl+Shift+M — toggle rewrite ON/OFF (classifier продолжает крутиться)");
+
         let (tx, mut rx) = mpsc::channel::<RawKeyEvent>(256);
 
         let mut devices: Vec<KeyboardDevice> = self
@@ -109,7 +118,15 @@ impl Platform for LinuxPlatform {
         loop {
             tokio::select! {
                 Some(ev) = rx.recv() => {
-                    if let Err(e) = handle_event(&mut xkb, &mut buffer, &classifier, &mut rewriter, &kwin, &ev).await {
+                    update_modifiers(&ev, &mut ctrl_pressed, &mut shift_pressed);
+                    if check_toggle_hotkey(&ev, ctrl_pressed, shift_pressed) {
+                        enabled = !enabled;
+                        info!(enabled, "matea toggle через Ctrl+Shift+M");
+                        // Сброс буфера чтобы не «доцеплять» к недопечатанному слову
+                        buffer.take();
+                        continue;
+                    }
+                    if let Err(e) = handle_event(&mut xkb, &mut buffer, &classifier, &mut rewriter, &kwin, &ev, enabled).await {
                         warn!("handle_event error: {e:#}");
                     }
                 }
@@ -142,6 +159,7 @@ async fn handle_event(
     rewriter: &mut Rewriter,
     kwin: &KwinLayout,
     ev: &RawKeyEvent,
+    enabled: bool,
 ) -> Result<()> {
     if ev.pressed {
         let utf8 = xkb.key_to_utf8(ev.evdev_code);
@@ -193,7 +211,11 @@ async fn handle_event(
                         );
 
                         if matches!(verdict, Verdict::Flip) {
-                            do_flip(rewriter, kwin, &t).await?;
+                            if enabled {
+                                do_flip(rewriter, kwin, &t).await?;
+                            } else {
+                                debug!(word = %t.word, "FLIP suppressed (matea disabled)");
+                            }
                         }
                     }
                 } else {
@@ -275,6 +297,25 @@ async fn do_flip(rewriter: &mut Rewriter, kwin: &KwinLayout, t: &crate::context:
     Ok(())
 }
 
+/// Обновить tracking-state модификаторов. Используем raw evdev keycodes — не
+/// xkb keysym — потому что для Ctrl/Shift нужны именно физические клавиши, не
+/// зависящие от раскладки.
+fn update_modifiers(ev: &RawKeyEvent, ctrl: &mut bool, shift: &mut bool) {
+    // KEY_LEFTCTRL = 29, KEY_RIGHTCTRL = 97
+    // KEY_LEFTSHIFT = 42, KEY_RIGHTSHIFT = 54
+    match ev.evdev_code {
+        29 | 97 => *ctrl = ev.pressed,
+        42 | 54 => *shift = ev.pressed,
+        _ => {}
+    }
+}
+
+/// Detect нажатие Ctrl+Shift+M (KEY_M = 50). Срабатывает только на pressed-event
+/// самой M (чтобы repeat-key autorepeat = 2 не толкал toggle несколько раз).
+fn check_toggle_hotkey(ev: &RawKeyEvent, ctrl: bool, shift: bool) -> bool {
+    ev.pressed && ev.evdev_code == 50 && ctrl && shift
+}
+
 #[derive(Debug)]
 struct RawKeyEvent {
     kbd_name: String,
@@ -322,6 +363,54 @@ async fn read_keyboard(
 
 /// Найти физические/виртуальные клавиатуры. Игнорируем НАШЕ собственное virtual
 /// устройство (matea virtual keyboard) — иначе self-loop при rewrite.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ev(code: u16, pressed: bool) -> RawKeyEvent {
+        RawKeyEvent {
+            kbd_name: "test".into(),
+            key: KeyCode::new(code),
+            evdev_code: code,
+            pressed,
+        }
+    }
+
+    #[test]
+    fn modifiers_track_ctrl() {
+        let mut ctrl = false;
+        let mut shift = false;
+        update_modifiers(&ev(29, true), &mut ctrl, &mut shift);
+        assert!(ctrl);
+        update_modifiers(&ev(29, false), &mut ctrl, &mut shift);
+        assert!(!ctrl);
+    }
+
+    #[test]
+    fn modifiers_track_shift() {
+        let mut ctrl = false;
+        let mut shift = false;
+        update_modifiers(&ev(42, true), &mut ctrl, &mut shift); // left shift
+        assert!(shift);
+        update_modifiers(&ev(54, false), &mut ctrl, &mut shift); // right shift release
+        assert!(!shift);
+    }
+
+    #[test]
+    fn hotkey_requires_both_modifiers() {
+        // KEY_M alone — false
+        assert!(!check_toggle_hotkey(&ev(50, true), false, false));
+        // M + Ctrl only — false
+        assert!(!check_toggle_hotkey(&ev(50, true), true, false));
+        // M + Shift only — false
+        assert!(!check_toggle_hotkey(&ev(50, true), false, true));
+        // M + Ctrl + Shift — true
+        assert!(check_toggle_hotkey(&ev(50, true), true, true));
+        // на release не реагируем (даже если все модификаторы зажаты)
+        assert!(!check_toggle_hotkey(&ev(50, false), true, true));
+    }
+}
+
 async fn discover_keyboards() -> Result<Vec<KeyboardDevice>> {
     let mut found = Vec::new();
     for (path, dev) in evdev::enumerate() {

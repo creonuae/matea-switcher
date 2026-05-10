@@ -246,7 +246,27 @@ editable-text replacement вместо backspace+rewrite.
   и текущее candidate валидно в обеих раскладках → bias к RU. Это уже
   proto-LLM логика, без модели.
 
-### Milestone 8: hotkeys + tray
+### Milestone 8: hotkey toggle ✅ (частично)
+
+**Статус:** базовая часть done на 2026-05-10. Глобальный **Ctrl+Shift+M**
+toggle ON/OFF реализован прямо в evdev-reader (без KGlobalAccel registration).
+Детально — [`docs/milestones/M8_hotkey_toggle.md`](milestones/M8_hotkey_toggle.md).
+
+Что закрыто:
+- Tracking modifier-state (Ctrl/Shift left+right) по физическим keycodes.
+- Detection Ctrl+Shift+M только на pressed event (autorepeat не toggle'ит).
+- На toggle = false → `do_flip` пропускается, classifier продолжает крутиться.
+- 3 unit-теста на helper-функции (всего теперь 22/22 ok).
+
+Что осталось (M8b/M9):
+- Конфигурируемый hotkey через config.toml.
+- Toast-нотификация через dunst при toggle.
+- Persistence enabled-state между запусками.
+- Manual flip-last-word (Ctrl+Shift+L) — для случаев когда auto не сработал.
+
+Tray icon (отдельная фича) — переехал в M9 целиком.
+
+### Milestone 8 (исторический план — оставлен для аудита)
 
 - KGlobalAccel binding (через D-Bus `org.kde.kglobalaccel`):
   - `Ctrl+Shift+L` — manual flip last word (если auto не сработал).
