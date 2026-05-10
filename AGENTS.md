@@ -19,11 +19,13 @@
 - **Текущий статус v0.1:** done — M1 (evdev), M2 (xkbcommon), M3 (WordBuffer),
   M4 (Hunspell classifier), M5/M5b/M5c/M5d (uinput rewriter + dynamic layout
   index + self-echo suppression + EVIOCGRAB атомарность),
+  **M6 (AT-SPI focus tracking + password/terminal/IDE guard)**,
   M7 (classifier hardening), M8 (Ctrl+Shift+M toggle),
   M9 + M9b + M9c (config.toml + apply general.enabled + hotkey parsing +
-  layouts.pair), **M10 (systemd user unit + install/uninstall scripts)**,
-  M11 (context bias). Не done: **M6** (AT-SPI — editable-text + password
-  detection + window blacklist) — единственный крупный остаток v0.1.
+  layouts.pair), M10 (systemd user unit + install/uninstall),
+  M11 (context bias). **v0.1 закрыт по основным фичам.** Дальше — v0.2 (LLM
+  через Qwen-2.5-0.5B GGUF для disambiguation Uncertain'ов и proactive
+  prediction по screen context, см. `docs/NEXT_STEPS.md → v0.2`).
 - **Аварийный stop**: пока нет M6, для остановки rewrite — **Ctrl+Shift+M**.
   matea продолжит логировать verdict, но FLIP-action будет пропущен.
 - **M5d EVIOCGRAB** реализован — на время `do_flip` грабим клавиатуры,

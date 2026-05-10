@@ -7,6 +7,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use super::Platform;
+use super::atspi::{spawn_listener as spawn_atspi_listener, FocusContext};
 use super::kwin::KwinLayout;
 use super::uinput::Rewriter;
 use super::xkb::XkbTranslator;
@@ -78,6 +79,12 @@ impl Platform for LinuxPlatform {
             .context("init KWin layout DBus client")?;
         info!("rewriter и kwin DBus готовы — переписывание включено");
 
+        // M6: AT-SPI listener в отдельной task. Если a11y-bus недоступна —
+        // gracefully degrades, focus_rx остаётся с дефолтом FocusContext
+        // (allows_flip() == true), matea работает как M5d.
+        let focus_rx = spawn_atspi_listener();
+        info!("AT-SPI listener spawned (focus tracking + password/blacklist guard)");
+
         // M8: глобальный enabled-flag и tracking modifier-state. Aварийный
         // hotkey Ctrl+Shift+M toggle'ит rewrite ON/OFF (classifier продолжает
         // работать и логировать, но FLIP-action пропускается). Если matea сходит
@@ -138,7 +145,8 @@ impl Platform for LinuxPlatform {
                         buffer.take();
                         continue;
                     }
-                    if let Err(e) = handle_event(&mut xkb, &mut buffer, &mut history, &classifier, &mut rewriter, &kwin, &cfg.layouts.pair, &ev, enabled).await {
+                    let focus_ctx = focus_rx.borrow().clone();
+                    if let Err(e) = handle_event(&mut xkb, &mut buffer, &mut history, &classifier, &mut rewriter, &kwin, &cfg.layouts.pair, &focus_ctx, &ev, enabled).await {
                         warn!("handle_event error: {e:#}");
                     }
                 }
@@ -172,6 +180,7 @@ async fn handle_event(
     rewriter: &mut Rewriter,
     kwin: &KwinLayout,
     pair: &[String],
+    focus: &FocusContext,
     ev: &RawKeyEvent,
     enabled: bool,
 ) -> Result<()> {
@@ -238,17 +247,26 @@ async fn handle_event(
                         );
 
                         if matches!(verdict, Verdict::Flip) {
-                            if enabled {
-                                do_flip(rewriter, kwin, pair, &t).await?;
-                                // После flip — добавим в history именно flipped (юзер
-                                // будет видеть это слово, и контекст должен это отражать).
-                                history.push(flipped.clone());
-                            } else {
+                            if !enabled {
                                 debug!(word = %t.word, "FLIP suppressed (matea disabled)");
                                 history.push(t.word.clone());
+                            } else if !focus.allows_flip() {
+                                // M6: AT-SPI говорит что в активном окне опасно
+                                // переписывать (password field или blacklisted
+                                // class — terminal/IDE).
+                                debug!(
+                                    word = %t.word,
+                                    window = %focus.window_class,
+                                    is_password = focus.is_password,
+                                    "FLIP suppressed (focus context blocks: password/blacklist)"
+                                );
+                                history.push(t.word.clone());
+                            } else {
+                                do_flip(rewriter, kwin, pair, &t).await?;
+                                // После flip — в history идёт flipped (юзер видит его).
+                                history.push(flipped.clone());
                             }
                         } else {
-                            // Keep / Uncertain — в history идёт оригинал что юзер ввёл.
                             history.push(t.word.clone());
                         }
                     }

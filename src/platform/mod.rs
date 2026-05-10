@@ -4,6 +4,8 @@ use async_trait::async_trait;
 use crate::config::Config;
 
 #[cfg(target_os = "linux")]
+mod atspi;
+#[cfg(target_os = "linux")]
 mod kwin;
 #[cfg(target_os = "linux")]
 mod linux;
