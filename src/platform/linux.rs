@@ -2,27 +2,27 @@ use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use evdev::{Device, EventSummary, KeyCode};
 use std::path::PathBuf;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use super::Platform;
+use super::kwin::KwinLayout;
+use super::uinput::Rewriter;
 use super::xkb::XkbTranslator;
 use crate::classifier::{ClassifyInput, DictClassifier, Verdict};
 use crate::context::{WordBuffer, is_word_boundary_char};
 
-/// Linux реализация (Wayland-first, X11 не поддерживаем).
+/// Linux реализация (Wayland-first).
 ///
-/// План v0.1 — итерация за итерацией:
-///   - [x] evdev reader: открыть `/dev/input/event*`, отфильтровать клавиатуры,
-///         читать events асинхронно, логировать нажатия.
-///   - [x] xkbcommon: keycode → UTF-8 с учётом активной раскладки.
-///   - [x] WordBuffer: накапливать символы, отдавать на word boundary.    ← **ЭТА ИТЕРАЦИЯ**
-///   - [ ] Classifier: hunspell + n-gram → Verdict.
-///   - [ ] uinput rewriter: BS×N + replacement, EVIOCGRAB во время записи.
-///   - [ ] zbus: переключение раскладки через KGlobalAccel/Layouts.
-///
-/// Архитектурное замечание: `xkb::State` не Send. Поэтому держим один XkbTranslator
-/// и WordBuffer только в main loop. Reader-задачи шлют сырые `RawKeyEvent` в канал.
+/// План v0.1:
+///   - [x] M1 evdev reader
+///   - [x] M2 xkbcommon translation
+///   - [x] M3 WordBuffer + boundary
+///   - [x] M4 Hunspell classifier
+///   - [x] M5 uinput rewriter + KWin layout switch на Verdict::Flip   ← **СЕЙЧАС**
+///   - [ ] M6 AT-SPI integration (uses editable-text где есть, fallback на uinput)
+///   - [ ] M7 classifier hardening (digits/URL/capitalized — Keep)
 pub struct LinuxPlatform {
     keyboards: Vec<KeyboardDevice>,
 }
@@ -66,6 +66,12 @@ impl Platform for LinuxPlatform {
             .context("init Hunspell словарей (en_US + ru_RU)")?;
         info!("classifier готов: en_US + ru_RU словари загружены");
 
+        let mut rewriter = Rewriter::new().context("init uinput rewriter")?;
+        let kwin = KwinLayout::new()
+            .await
+            .context("init KWin layout DBus client")?;
+        info!("rewriter и kwin DBus готовы — переписывание включено");
+
         let (tx, mut rx) = mpsc::channel::<RawKeyEvent>(256);
 
         let mut devices: Vec<KeyboardDevice> = self
@@ -98,12 +104,14 @@ impl Platform for LinuxPlatform {
         drop(tx);
 
         info!("xkb инициализирован (us,ru, grp:alt_space_toggle)");
-        info!("evdev reader запущен. Ctrl+C для выхода. Печатай — на word-boundary будет показано слово.");
+        info!("evdev reader запущен. Печатай — на Verdict::Flip matea сама перепишет слово.");
 
         loop {
             tokio::select! {
                 Some(ev) = rx.recv() => {
-                    handle_event(&mut xkb, &mut buffer, &classifier, &ev);
+                    if let Err(e) = handle_event(&mut xkb, &mut buffer, &classifier, &mut rewriter, &kwin, &ev).await {
+                        warn!("handle_event error: {e:#}");
+                    }
                 }
                 _ = tokio::signal::ctrl_c() => {
                     info!("получен Ctrl+C, завершаюсь");
@@ -123,16 +131,19 @@ impl Platform for LinuxPlatform {
     }
 }
 
-/// Главный switch: обновляет xkb state, наполняет/режет WordBuffer, на word-boundary
-/// классифицирует слово через Hunspell и логирует Verdict.
-fn handle_event(
+/// Главный switch. На press с непустым utf8 — пушим в буфер. На boundary —
+/// classify, и если Verdict::Flip — переключаем системную раскладку через KWin
+/// DBus, ждём 50мс, эмитим backspace × N + replay keycodes (uinput интерпретирует
+/// их в новой раскладке и даёт корректный текст в активном окне).
+async fn handle_event(
     xkb: &mut XkbTranslator,
     buffer: &mut WordBuffer,
     classifier: &DictClassifier,
+    rewriter: &mut Rewriter,
+    kwin: &KwinLayout,
     ev: &RawKeyEvent,
-) {
+) -> Result<()> {
     if ev.pressed {
-        // ВАЖНО: glyph и keysym берутся ДО update_key — для нажатого состояния
         let utf8 = xkb.key_to_utf8(ev.evdev_code);
         let keysym_name = xkb.key_to_keysym_name(ev.evdev_code);
         let group = xkb.active_group();
@@ -143,18 +154,14 @@ fn handle_event(
         };
 
         // Backspace — снимаем последний символ из буфера.
-        // KEY_BACKSPACE = 14 в evdev; keysym_name == "BackSpace".
         if keysym_name == "BackSpace" {
             buffer.pop();
             debug!(buf = %buffer.as_str(), "← backspace");
             xkb.update_key(ev.evdev_code, true);
-            return;
+            return Ok(());
         }
 
-        // Решение по utf8: пусто = модификатор/функциональная клавиша → игнор для буфера.
         if !utf8.is_empty() {
-            // Если первый char строки — boundary char, завершаем слово
-            // (для большинства "видимых" глифов utf8 это **один** char, но space даёт " ").
             let mut chars = utf8.chars();
             if let Some(first) = chars.next() {
                 if is_word_boundary_char(first) {
@@ -166,16 +173,15 @@ fn handle_event(
                             recent_words: &[],
                             window_class: None,
                         });
-                        let verdict_str = match verdict {
-                            Verdict::Keep => "KEEP",
-                            Verdict::Flip => "FLIP",
-                            Verdict::Uncertain => "UNCERTAIN",
-                        };
-                        // Покажем что получится при flip — для debug-визуализации
                         let flipped = match t.layout.as_str() {
                             "us" => crate::mapper::en_to_ru(&t.word),
                             "ru" => crate::mapper::ru_to_en(&t.word),
                             _ => String::new(),
+                        };
+                        let verdict_str = match verdict {
+                            Verdict::Keep => "KEEP",
+                            Verdict::Flip => "FLIP",
+                            Verdict::Uncertain => "UNCERTAIN",
                         };
                         info!(
                             word = %t.word,
@@ -185,10 +191,13 @@ fn handle_event(
                             verdict = verdict_str,
                             "WORD"
                         );
+
+                        if matches!(verdict, Verdict::Flip) {
+                            do_flip(rewriter, kwin, &t).await?;
+                        }
                     }
                 } else {
-                    buffer.push(first, layout);
-                    // Если в utf8 ещё символы (composed input в будущем) — игнор для v0.1
+                    buffer.push(first, layout, ev.evdev_code);
                 }
             }
 
@@ -212,8 +221,58 @@ fn handle_event(
         }
     }
 
-    // Update xkb state в любом случае (press или release) для modifier/group bookkeeping.
     xkb.update_key(ev.evdev_code, ev.pressed);
+    Ok(())
+}
+
+/// Выполнить flip-action: переключить системную раскладку и переписать слово.
+///
+/// Семантика:
+///   1. Стираем напечатанное BS×N. Боундари-чарик (space/punct) который только
+///      что юзер ввёл — НЕ стираем; он останется на месте, а перед ним будет
+///      переписанное слово.
+///   2. Переключаем системную раскладку через KWin DBus.
+///   3. Ждём 50мс — даём compositor'у применить layout до того как мы шлём
+///      keycodes (иначе первая буква вылетит в старой раскладке).
+///   4. Re-emit keycodes — те же физические клавиши даём в новой раскладке,
+///      получаем корректный текст в активном окне.
+async fn do_flip(rewriter: &mut Rewriter, kwin: &KwinLayout, t: &crate::context::TakenWord) -> Result<()> {
+    let target_index: u32 = match t.layout.as_str() {
+        "us" => 1,  // ru — assuming kxkbrc LayoutList = ru,us... но typically [0]=us,[1]=ru
+        "ru" => 0,
+        _ => {
+            warn!(layout = %t.layout, "do_flip: unknown layout, skip");
+            return Ok(());
+        }
+    };
+
+    info!(
+        word = %t.word,
+        keycodes = ?t.keycodes,
+        target_layout_index = target_index,
+        "FLIP: переписываю"
+    );
+
+    // 1. Стираем то что юзер уже напечатал.
+    rewriter
+        .backspace(t.keycodes.len())
+        .context("flip: backspace")?;
+
+    // 2. Переключаем раскладку.
+    let _ok = kwin
+        .set(target_index)
+        .await
+        .context("flip: KWin setLayout")?;
+
+    // 3. Даём compositor'у применить.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // 4. Re-emit keycodes — теперь они дадут глифы новой раскладки.
+    rewriter
+        .replay_keycodes(&t.keycodes)
+        .context("flip: replay")?;
+
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -261,10 +320,18 @@ async fn read_keyboard(
     Ok(())
 }
 
+/// Найти физические/виртуальные клавиатуры. Игнорируем НАШЕ собственное virtual
+/// устройство (matea virtual keyboard) — иначе self-loop при rewrite.
 async fn discover_keyboards() -> Result<Vec<KeyboardDevice>> {
     let mut found = Vec::new();
     for (path, dev) in evdev::enumerate() {
         let name = dev.name().unwrap_or("<unnamed>").to_string();
+        if name.contains("matea") {
+            // Не слушаем сами себя — иначе наш uinput emit вернётся обратно через
+            // evdev и мы получим бесконечный цикл backspace+replay.
+            debug!("skip self-device: {}", name);
+            continue;
+        }
         let supported = dev.supported_keys();
         let is_keyboard = supported
             .map(|set| set.contains(KeyCode::KEY_A))

@@ -86,7 +86,25 @@
 
 ## Roadmap
 
-### Milestone 5 (next): uinput rewriter
+### Milestone 5: uinput rewriter ✅
+
+**Статус:** done на 2026-05-10. Детальный отчёт о реализации, обоснованиях
+и known issues — в [`docs/milestones/M5_uinput_rewriter.md`](milestones/M5_uinput_rewriter.md).
+
+Краткое summary:
+- `src/platform/uinput.rs` — `Rewriter` через `evdev::uinput::VirtualDeviceBuilder`.
+- `src/platform/kwin.rs` — `KwinLayout` через zbus proxy на `org.kde.keyboard /Layouts`.
+- `src/context.rs` `WordBuffer` хранит `keycodes: Vec<u16>` для re-emit.
+- На `Verdict::Flip`: backspace×N → setLayout(target) → sleep 50мс → replay keycodes.
+- 14/14 unit-тестов зелёные (без unit-тестов на uinput/zbus — kernel-зависимы).
+
+Что отложено в M5b (см. M5 doc):
+- `EVIOCGRAB` для гарантии atomic rewrite (race window 50мс открыт).
+- Wait for `layoutChanged` signal вместо sleep'а.
+- Динамическое определение индексов раскладок через `getLayoutsList()`.
+- udev rule для `/dev/uinput`.
+
+### Milestone 5 (исторический план — оставлен для аудита)
 
 **Цель:** при `Verdict::Flip` физически удалить N символов из активного окна
 и впечатать корректную строку, плюс переключить системную раскладку.

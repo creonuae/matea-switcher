@@ -16,9 +16,10 @@
   контексту.
 - **Язык:** Rust 2024. Не Go, не Python, не C++ — обоснование в
   `docs/NEXT_STEPS.md` («Текущее состояние» + commit message `init`).
-- **Текущий статус:** v0.1 milestones M1-M4 готовы (evdev reader, xkbcommon,
-  WordBuffer, Hunspell classifier). Следующий milestone — **M5: uinput
-  rewriter**.
+- **Текущий статус:** v0.1 milestones M1-M5 готовы (evdev reader, xkbcommon,
+  WordBuffer, Hunspell classifier, **uinput rewriter + KWin layout switch**).
+  Следующий milestone — **M6: AT-SPI integration** (editable-text вместо
+  backspace где есть, password fields detection, window class blacklist).
 - **15/15 unit-тестов зелёные.** `cargo test` после `cargo build --release`.
 
 ## Карта документов
@@ -119,13 +120,24 @@ tail -F /tmp/matea.log | grep WORD
 
 ## Что сейчас НЕ работает
 
-- matea **только слушает**, ничего не **переписывает** в активное окно.
-  uinput rewriter — это M5, следующий milestone (детальный план в
-  `docs/NEXT_STEPS.md → Milestone 5`).
-- Системная раскладка **не переключается** — это часть M5.
-- AT-SPI integration отсутствует (M6).
-- LLM не подключен (v0.2).
+- **AT-SPI** не подключен — нет различения editable-text от терминалов и
+  password fields. **Не запускать matea во время ввода паролей** (matea сейчас
+  видит и может переписать парольный ввод). M6 закрывает.
+- **JetBrains/VSCode/Konsole** — uinput rewrite сломает completion и undo.
+  Window class blacklist — часть M6.
+- LLM (Verdict::Uncertain → Keep по умолчанию) — v0.2.
 - Tray icon, hotkeys, config файл — M8-M9.
+
+## Что РАБОТАЕТ сейчас (v0.1 после M5)
+
+- Read evdev streams от всех клавиатур, async, latency <1мс.
+- xkbcommon translation (keycode → glyph + layout tracking, us+ru с auto-switch
+  через grp:alt_space_toggle).
+- WordBuffer + word boundary detection.
+- Hunspell classifier (en_US + ru_RU UTF-8 cache в `~/.local/share/matea/dicts/`).
+- **uinput rewriter** — на `Verdict::Flip` физически переписывает слово в
+  активном окне через virtual keyboard.
+- **KWin layout switch** через D-Bus (`org.kde.keyboard /Layouts setLayout`).
 
 ## Соглашения по коммитам
 

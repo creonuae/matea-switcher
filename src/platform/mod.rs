@@ -2,7 +2,11 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 #[cfg(target_os = "linux")]
+mod kwin;
+#[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "linux")]
+mod uinput;
 #[cfg(target_os = "linux")]
 mod xkb;
 

@@ -11,6 +11,12 @@ use std::collections::VecDeque;
 #[derive(Debug, Default)]
 pub struct WordBuffer {
     chars: String,
+    /// Сырые evdev keycodes которые юзер нажал (по символу, без модификаторов).
+    /// Параллельный массив к chars: keycodes[i] — keycode который дал chars[i].
+    /// Сохраняем для re-emit при flip: вместо обратного char→keycode mapping
+    /// просто шлём те же физические клавиши после смены системной раскладки —
+    /// они интерпретируются заново и дают глифы в новой раскладке.
+    keycodes: Vec<u16>,
     /// Раскладка, в которой пользователь начал печатать это слово (us/ru/...).
     /// Если в середине слова раскладка сменилась — это уже редкий edge case,
     /// фиксируем первую — её и используем при классификации.
@@ -18,16 +24,18 @@ pub struct WordBuffer {
 }
 
 impl WordBuffer {
-    pub fn push(&mut self, ch: char, layout: &str) {
+    pub fn push(&mut self, ch: char, layout: &str, evdev_code: u16) {
         if self.chars.is_empty() {
             self.started_in_layout = Some(layout.to_string());
         }
         self.chars.push(ch);
+        self.keycodes.push(evdev_code);
     }
 
     /// Удалить последний символ (для KEY_BACKSPACE). Если буфер пуст — no-op.
     pub fn pop(&mut self) -> Option<char> {
         let c = self.chars.pop();
+        self.keycodes.pop();
         if self.chars.is_empty() {
             self.started_in_layout = None;
         }
@@ -37,7 +45,12 @@ impl WordBuffer {
     pub fn take(&mut self) -> TakenWord {
         let chars = std::mem::take(&mut self.chars);
         let layout = self.started_in_layout.take().unwrap_or_default();
-        TakenWord { word: chars, layout }
+        let keycodes = std::mem::take(&mut self.keycodes);
+        TakenWord {
+            word: chars,
+            layout,
+            keycodes,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -61,6 +74,9 @@ impl WordBuffer {
 pub struct TakenWord {
     pub word: String,
     pub layout: String,
+    /// Сырые evdev keycodes которые юзер нажал. Длина == word.chars().count().
+    /// Для re-emit при flip.
+    pub keycodes: Vec<u16>,
 }
 
 /// Разделители слов. Не считаем символом слова: пробелы, табы, enter,
@@ -114,22 +130,23 @@ mod tests {
     #[test]
     fn buffer_basic_push_take() {
         let mut b = WordBuffer::default();
-        b.push('h', "us");
-        b.push('i', "us");
+        b.push('h', "us", 35); // KEY_H
+        b.push('i', "us", 23); // KEY_I
         assert_eq!(b.as_str(), "hi");
         assert_eq!(b.layout(), Some("us"));
         let t = b.take();
         assert_eq!(t.word, "hi");
         assert_eq!(t.layout, "us");
+        assert_eq!(t.keycodes, vec![35, 23]);
         assert!(b.is_empty());
     }
 
     #[test]
     fn buffer_unicode_pop() {
         let mut b = WordBuffer::default();
-        b.push('п', "ru");
-        b.push('р', "ru");
-        b.push('и', "ru");
+        b.push('п', "ru", 34); // KEY_G — даёт "п" в ru
+        b.push('р', "ru", 35); // KEY_H — даёт "р" в ru
+        b.push('и', "ru", 48); // KEY_B — даёт "и" в ru
         assert_eq!(b.len(), 3);
         let popped = b.pop();
         assert_eq!(popped, Some('и'));
@@ -139,7 +156,7 @@ mod tests {
     #[test]
     fn buffer_pop_until_empty_clears_layout() {
         let mut b = WordBuffer::default();
-        b.push('a', "us");
+        b.push('a', "us", 30);
         assert_eq!(b.layout(), Some("us"));
         b.pop();
         assert_eq!(b.layout(), None);
