@@ -81,8 +81,34 @@ matea
 git clone https://github.com/creonuae/matea-switcher.git
 cd matea-switcher
 cargo build --release
-./target/release/matea
+./target/release/matea-switcher
 ```
+
+## Установка как systemd-user-сервис
+
+```bash
+./scripts/install.sh
+# Это:
+#   - cargo build --release
+#   - install binary в ~/.local/bin/matea-switcher
+#   - install systemd unit в ~/.config/systemd/user/matea-switcher.service
+#   - daemon-reload + enable (autostart на следующем входе в Plasma session)
+
+# Запустить сейчас (без logout):
+systemctl --user start matea-switcher.service
+
+# Логи в реальном времени:
+journalctl --user -u matea-switcher -f
+
+# Удалить:
+./scripts/uninstall.sh
+```
+
+При первом запуске matea создаст `~/.config/matea-switcher/config.toml` с
+дефолтами. Edit его → `systemctl --user restart matea-switcher`.
+
+**Аварийный stop переписывания** (без stop'а демона) — `Ctrl+Shift+M` в
+любом окне. Hotkey настраивается в config.
 
 ## Privacy
 

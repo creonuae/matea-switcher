@@ -17,14 +17,13 @@
 - **Язык:** Rust 2024. Не Go, не Python, не C++ — обоснование в
   `docs/NEXT_STEPS.md` («Текущее состояние» + commit message `init`).
 - **Текущий статус v0.1:** done — M1 (evdev), M2 (xkbcommon), M3 (WordBuffer),
-  M4 (Hunspell classifier), M5 (uinput rewriter + KWin layout switch),
-  M5b (dynamic layout index), M5c (self-echo suppression),
-  **M5d (EVIOCGRAB атомарность rewrite)**, M7 (classifier hardening),
-  M8 (Ctrl+Shift+M toggle), M9 + M9b (config.toml + apply general.enabled),
-  M11 (context bias через recent_words). Не done: **M6** (AT-SPI —
-  editable-text + password detection + window blacklist), M9c (hotkey
-  parsing), M10 (systemd unit). Следующий приоритет — **M6** или
-  live-verification M5d.
+  M4 (Hunspell classifier), M5/M5b/M5c/M5d (uinput rewriter + dynamic layout
+  index + self-echo suppression + EVIOCGRAB атомарность),
+  M7 (classifier hardening), M8 (Ctrl+Shift+M toggle),
+  M9 + M9b + M9c (config.toml + apply general.enabled + hotkey parsing +
+  layouts.pair), **M10 (systemd user unit + install/uninstall scripts)**,
+  M11 (context bias). Не done: **M6** (AT-SPI — editable-text + password
+  detection + window blacklist) — единственный крупный остаток v0.1.
 - **Аварийный stop**: пока нет M6, для остановки rewrite — **Ctrl+Shift+M**.
   matea продолжит логировать verdict, но FLIP-action будет пропущен.
 - **M5d EVIOCGRAB** реализован — на время `do_flip` грабим клавиатуры,

@@ -1,0 +1,22 @@
+[Unit]
+Description=matea-switcher — AI keyboard layout auto-switcher
+Documentation=https://github.com/creonuae/matea-switcher
+PartOf=graphical-session.target
+After=plasma-plasmashell.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/matea-switcher
+Environment=MATEA_LOG=info
+# tracing-subscriber пишет в stderr, systemd journal перехватит. Юзер видит
+# логи через `journalctl --user -u matea-switcher -f`.
+StandardOutput=journal
+StandardError=journal
+Restart=on-failure
+RestartSec=3
+# Сразу не падать если KWin DBus не готов на boot — даём 10 сек на init
+# Plasma. После — Restart=on-failure будет ретраить.
+TimeoutStartSec=10
+
+[Install]
+WantedBy=graphical-session.target
