@@ -168,6 +168,36 @@ MATEA_LOG=info ./target/release/matea > /tmp/matea.log 2>&1 &
 #   INFO ... FLIP: переписываю keycodes=[34,35,48,32,20,49] target_layout_index=1
 ```
 
+## Live smoke-тест 2026-05-10 — что узнали
+
+Запустили matea в Konsole-сессии (где Claude conversation шёл — не лучшая идея,
+урок), напечатали серию слов. Результаты:
+
+**Классификатор — на 5+:**
+- `hello` → KEEP ✓
+- `привет`, `тут`, `работает`, `лог` (русские в ru) → KEEP ✓
+- `ghbdtn`, `nfv`, `yt`, `nfr`, `rjhjxt`, `ybxtuj`, `cnhfyyj`, `gjrf`, `cfv`,
+  `xnj-nj`, `jy` (русские слова на us-раскладке) → **FLIP** ✓
+- `helo`, `bvf`, `смотир`, `ну`, `т`, `ghjbc`, `jlbn`, `jnftn` (опечатки/обрывки)
+  → UNCERTAIN (правильно — не делаем rewrite на сомнительном)
+
+**Rewriter работал частично, упал на DBus:**
+- backspace × N **отработал** (юзер видел как слова с экрана исчезали)
+- `org.kde.KeyboardLayouts.setLayout` упал с `UnknownMethod 'SetLayout'`
+- replay тоже не выполнился (бы`)
+- Итог: на каждом FLIP юзеру стерли его слово и **не вернули** заменённое.
+  Текст в Konsole превратился в кашу.
+
+**Root cause:** zbus proxy macro по дефолту делает PascalCase из Rust fn name.
+KDE экспортирует методы в camelCase. Зафиксировал явный `#[zbus(name = "...")]`
+на каждом методе в `src/platform/kwin.rs` (commit `fd266aa`). После фикса —
+повторить smoke в **отдельном** окне (gedit/kate/Telegram), не в Konsole.
+
+**Урок про safety:** до M6 (window class blacklist) **не запускать matea с
+открытым Claude Code в Konsole**. Risk catch-22 — если что-то ломается, юзер
+не может сказать «остановись» через тот же чат, потому что его сообщения
+переписываются.
+
 ## Что осталось / known issues
 
 ### TODO для следующих итераций (M5b)
