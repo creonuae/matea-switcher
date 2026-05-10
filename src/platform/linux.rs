@@ -83,12 +83,14 @@ impl Platform for LinuxPlatform {
         // работать и логировать, но FLIP-action пропускается). Если matea сходит
         // с ума или попадаешь в окно где она опасна — нажми Ctrl+Shift+M.
         let mut enabled: bool = cfg.general.enabled;
-        let mut ctrl_pressed = false;
-        let mut shift_pressed = false;
+        // M9c: парсим hotkey из config один раз, затем O(1) проверка на каждом event.
+        let toggle_hotkey = crate::config::Hotkey::parse(&cfg.hotkeys.toggle)
+            .with_context(|| format!("invalid config.hotkeys.toggle = '{}'", cfg.hotkeys.toggle))?;
+        let mut mod_state = ModState::default();
         info!(
             initial_enabled = enabled,
             toggle_hotkey = %cfg.hotkeys.toggle,
-            "hotkey: Ctrl+Shift+M — toggle rewrite ON/OFF (classifier продолжает крутиться)"
+            "hotkey toggle ON/OFF из config (classifier продолжает крутиться при OFF)"
         );
 
         let (tx, mut rx) = mpsc::channel::<RawKeyEvent>(256);
@@ -128,15 +130,15 @@ impl Platform for LinuxPlatform {
         loop {
             tokio::select! {
                 Some(ev) = rx.recv() => {
-                    update_modifiers(&ev, &mut ctrl_pressed, &mut shift_pressed);
-                    if check_toggle_hotkey(&ev, ctrl_pressed, shift_pressed) {
+                    mod_state.update(&ev);
+                    if check_toggle_hotkey_v2(&ev, &mod_state, &toggle_hotkey) {
                         enabled = !enabled;
                         info!(enabled, "matea toggle через Ctrl+Shift+M");
                         // Сброс буфера чтобы не «доцеплять» к недопечатанному слову
                         buffer.take();
                         continue;
                     }
-                    if let Err(e) = handle_event(&mut xkb, &mut buffer, &mut history, &classifier, &mut rewriter, &kwin, &ev, enabled).await {
+                    if let Err(e) = handle_event(&mut xkb, &mut buffer, &mut history, &classifier, &mut rewriter, &kwin, &cfg.layouts.pair, &ev, enabled).await {
                         warn!("handle_event error: {e:#}");
                     }
                 }
@@ -169,6 +171,7 @@ async fn handle_event(
     classifier: &DictClassifier,
     rewriter: &mut Rewriter,
     kwin: &KwinLayout,
+    pair: &[String],
     ev: &RawKeyEvent,
     enabled: bool,
 ) -> Result<()> {
@@ -236,7 +239,7 @@ async fn handle_event(
 
                         if matches!(verdict, Verdict::Flip) {
                             if enabled {
-                                do_flip(rewriter, kwin, &t).await?;
+                                do_flip(rewriter, kwin, pair, &t).await?;
                                 // После flip — добавим в history именно flipped (юзер
                                 // будет видеть это слово, и контекст должен это отражать).
                                 history.push(flipped.clone());
@@ -289,14 +292,19 @@ async fn handle_event(
 ///      keycodes (иначе первая буква вылетит в старой раскладке).
 ///   4. Re-emit keycodes — те же физические клавиши даём в новой раскладке,
 ///      получаем корректный текст в активном окне.
-async fn do_flip(rewriter: &mut Rewriter, kwin: &KwinLayout, t: &crate::context::TakenWord) -> Result<()> {
-    // Определяем target_layout по парам, потом ищем его реальный индекс
-    // в kxkbrc через KwinLayout (M5b — больше не hardcode).
-    let target_name = match t.layout.as_str() {
-        "us" => "ru",
-        "ru" => "us",
-        other => {
-            warn!(layout = %other, "do_flip: неизвестная раскладка, skip");
+async fn do_flip(
+    rewriter: &mut Rewriter,
+    kwin: &KwinLayout,
+    pair: &[String],
+    t: &crate::context::TakenWord,
+) -> Result<()> {
+    // M9c: target_layout определяем по cfg.layouts.pair (динамически).
+    // pair = ["us", "ru"] значит us↔ru. Если pair длиннее (3+ раскладки),
+    // в v0.1 поддерживается только пара — берём первые два не-current'а.
+    let target_name = match pair.iter().find(|name| name.as_str() != t.layout.as_str()) {
+        Some(t) => t.as_str(),
+        None => {
+            warn!(layout = %t.layout, ?pair, "do_flip: в config.layouts.pair нет alternative, skip");
             return Ok(());
         }
     };
@@ -349,23 +357,47 @@ async fn do_flip(rewriter: &mut Rewriter, kwin: &KwinLayout, t: &crate::context:
     Ok(())
 }
 
-/// Обновить tracking-state модификаторов. Используем raw evdev keycodes — не
-/// xkb keysym — потому что для Ctrl/Shift нужны именно физические клавиши, не
-/// зависящие от раскладки.
-fn update_modifiers(ev: &RawKeyEvent, ctrl: &mut bool, shift: &mut bool) {
-    // KEY_LEFTCTRL = 29, KEY_RIGHTCTRL = 97
-    // KEY_LEFTSHIFT = 42, KEY_RIGHTSHIFT = 54
-    match ev.evdev_code {
-        29 | 97 => *ctrl = ev.pressed,
-        42 | 54 => *shift = ev.pressed,
-        _ => {}
+/// State модификаторов в реальном времени. Используем raw evdev keycodes — не
+/// xkb keysym — потому что для Ctrl/Shift/Alt/Meta нужны именно физические
+/// клавиши, не зависящие от раскладки.
+#[derive(Debug, Default, Clone, Copy)]
+struct ModState {
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
+    meta: bool,
+}
+
+impl ModState {
+    fn update(&mut self, ev: &RawKeyEvent) {
+        match ev.evdev_code {
+            // KEY_LEFTCTRL=29, KEY_RIGHTCTRL=97
+            29 | 97 => self.ctrl = ev.pressed,
+            // KEY_LEFTSHIFT=42, KEY_RIGHTSHIFT=54
+            42 | 54 => self.shift = ev.pressed,
+            // KEY_LEFTALT=56, KEY_RIGHTALT=100
+            56 | 100 => self.alt = ev.pressed,
+            // KEY_LEFTMETA=125, KEY_RIGHTMETA=126
+            125 | 126 => self.meta = ev.pressed,
+            _ => {}
+        }
     }
 }
 
-/// Detect нажатие Ctrl+Shift+M (KEY_M = 50). Срабатывает только на pressed-event
-/// самой M (чтобы repeat-key autorepeat = 2 не толкал toggle несколько раз).
-fn check_toggle_hotkey(ev: &RawKeyEvent, ctrl: bool, shift: bool) -> bool {
-    ev.pressed && ev.evdev_code == 50 && ctrl && shift
+/// Detect совпадение event с конфигурируемым hotkey. Срабатывает только на
+/// pressed-event main клавиши (чтобы autorepeat не толкал toggle N раз).
+/// Все 4 модификатора должны точно совпадать (ни одного лишнего).
+fn check_toggle_hotkey_v2(
+    ev: &RawKeyEvent,
+    state: &ModState,
+    hotkey: &crate::config::Hotkey,
+) -> bool {
+    ev.pressed
+        && ev.evdev_code == hotkey.keycode
+        && state.ctrl == hotkey.ctrl
+        && state.shift == hotkey.shift
+        && state.alt == hotkey.alt
+        && state.meta == hotkey.meta
 }
 
 #[derive(Debug)]
@@ -429,37 +461,49 @@ mod tests {
     }
 
     #[test]
-    fn modifiers_track_ctrl() {
-        let mut ctrl = false;
-        let mut shift = false;
-        update_modifiers(&ev(29, true), &mut ctrl, &mut shift);
-        assert!(ctrl);
-        update_modifiers(&ev(29, false), &mut ctrl, &mut shift);
-        assert!(!ctrl);
+    fn mod_state_tracks_all_modifiers() {
+        let mut s = ModState::default();
+        s.update(&ev(29, true));     // left ctrl
+        assert!(s.ctrl);
+        s.update(&ev(42, true));     // left shift
+        assert!(s.shift);
+        s.update(&ev(56, true));     // left alt
+        assert!(s.alt);
+        s.update(&ev(125, true));    // left meta
+        assert!(s.meta);
+        s.update(&ev(97, false));    // right ctrl release
+        assert!(!s.ctrl);
+        // Right variants работают как один логический modifier
+        s.update(&ev(54, false));    // right shift release
+        assert!(!s.shift);
     }
 
     #[test]
-    fn modifiers_track_shift() {
-        let mut ctrl = false;
-        let mut shift = false;
-        update_modifiers(&ev(42, true), &mut ctrl, &mut shift); // left shift
-        assert!(shift);
-        update_modifiers(&ev(54, false), &mut ctrl, &mut shift); // right shift release
-        assert!(!shift);
+    fn hotkey_v2_exact_modifier_match() {
+        let hotkey = crate::config::Hotkey::parse("Ctrl+Shift+M").unwrap();
+        let none = ModState::default();
+        let ctrl_only = ModState { ctrl: true, ..Default::default() };
+        let ctrl_shift = ModState { ctrl: true, shift: true, ..Default::default() };
+        let ctrl_shift_alt = ModState { ctrl: true, shift: true, alt: true, ..Default::default() };
+
+        assert!(!check_toggle_hotkey_v2(&ev(50, true), &none, &hotkey));
+        assert!(!check_toggle_hotkey_v2(&ev(50, true), &ctrl_only, &hotkey));
+        assert!(check_toggle_hotkey_v2(&ev(50, true), &ctrl_shift, &hotkey));
+        // Лишний Alt — НЕ срабатывает (exact match)
+        assert!(!check_toggle_hotkey_v2(&ev(50, true), &ctrl_shift_alt, &hotkey));
+        // На release не реагируем
+        assert!(!check_toggle_hotkey_v2(&ev(50, false), &ctrl_shift, &hotkey));
     }
 
     #[test]
-    fn hotkey_requires_both_modifiers() {
-        // KEY_M alone — false
-        assert!(!check_toggle_hotkey(&ev(50, true), false, false));
-        // M + Ctrl only — false
-        assert!(!check_toggle_hotkey(&ev(50, true), true, false));
-        // M + Shift only — false
-        assert!(!check_toggle_hotkey(&ev(50, true), false, true));
-        // M + Ctrl + Shift — true
-        assert!(check_toggle_hotkey(&ev(50, true), true, true));
-        // на release не реагируем (даже если все модификаторы зажаты)
-        assert!(!check_toggle_hotkey(&ev(50, false), true, true));
+    fn hotkey_v2_pause_no_modifiers() {
+        let hotkey = crate::config::Hotkey::parse("Pause").unwrap();
+        let none = ModState::default();
+        let ctrl_only = ModState { ctrl: true, ..Default::default() };
+        // Только KEY_PAUSE без модификаторов
+        assert!(check_toggle_hotkey_v2(&ev(119, true), &none, &hotkey));
+        // С Ctrl — НЕ срабатывает
+        assert!(!check_toggle_hotkey_v2(&ev(119, true), &ctrl_only, &hotkey));
     }
 }
 
