@@ -51,7 +51,12 @@ pub struct Hotkeys {
 
 fn default_true() -> bool { true }
 fn default_layout_pair() -> Vec<String> { vec!["us".into(), "ru".into()] }
-fn default_toggle_hotkey() -> String { "Ctrl+Shift+M".into() }
+// Дефолт 2026-05-10:
+// - Ctrl+Shift+M (был раньше) конфликтует с Konsole ("Manage Profiles").
+// - Pause не подходит — на ноутбуках/tenkeyless часто отсутствует.
+// Ctrl+Alt+M: M-семантика, есть на любой клавиатуре, не занят
+// стандартными KDE/Konsole/Firefox шорткатами. Юзер может сменить в config.
+fn default_toggle_hotkey() -> String { "Ctrl+Alt+M".into() }
 
 /// Парсенный hotkey: набор модификаторов + один main keycode.
 ///
@@ -69,7 +74,7 @@ pub struct Hotkey {
 }
 
 impl Hotkey {
-    /// Парсить строку формата `"Ctrl+Shift+M"`. Регистр не важен:
+    /// Парсить строку формата `"Ctrl+Alt+M"`. Регистр не важен:
     /// `ctrl+shift+m` == `Ctrl+Shift+M`.
     /// Поддерживаемые модификаторы: Ctrl, Shift, Alt, Meta/Super/Win.
     /// Поддерживаемые клавиши: A-Z, 0-9, F1-F12, Space, Tab, Enter, Escape,
@@ -212,7 +217,7 @@ mod tests {
         let back: Config = toml::from_str(&s).unwrap();
         assert!(back.general.enabled);
         assert_eq!(back.layouts.pair, vec!["us", "ru"]);
-        assert_eq!(back.hotkeys.toggle, "Ctrl+Shift+M");
+        assert_eq!(back.hotkeys.toggle, "Ctrl+Alt+M");
     }
 
     #[test]
@@ -222,15 +227,15 @@ mod tests {
         let c: Config = toml::from_str(s).unwrap();
         assert!(!c.general.enabled);
         assert_eq!(c.layouts.pair, vec!["us", "ru"]);
-        assert_eq!(c.hotkeys.toggle, "Ctrl+Shift+M");
+        assert_eq!(c.hotkeys.toggle, "Ctrl+Alt+M");
     }
 
     #[test]
     fn hotkey_parse_default() {
-        let h = Hotkey::parse("Ctrl+Shift+M").unwrap();
+        let h = Hotkey::parse("Ctrl+Alt+M").unwrap();
         assert!(h.ctrl);
-        assert!(h.shift);
-        assert!(!h.alt);
+        assert!(!h.shift);
+        assert!(h.alt);
         assert!(!h.meta);
         assert_eq!(h.keycode, 50); // KEY_M
     }
