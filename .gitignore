@@ -12,3 +12,8 @@ Cargo.lock.bak
 
 # Local config / cache
 /.matea-local/
+
+# Local agent session caches (попадают сюда некоторые tooling sandboxes)
+/.flutter-code/
+/.cursor/
+/.aider*
