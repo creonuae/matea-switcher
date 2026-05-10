@@ -262,7 +262,7 @@ async fn handle_event(
                                 );
                                 history.push(t.word.clone());
                             } else {
-                                do_flip(rewriter, kwin, pair, &t).await?;
+                                do_flip(rewriter, kwin, pair, &t, xkb).await?;
                                 // После flip — в history идёт flipped (юзер видит его).
                                 history.push(flipped.clone());
                             }
@@ -315,6 +315,7 @@ async fn do_flip(
     kwin: &KwinLayout,
     pair: &[String],
     t: &crate::context::TakenWord,
+    xkb: &mut XkbTranslator,
 ) -> Result<()> {
     // M9c: target_layout определяем по cfg.layouts.pair (динамически).
     // pair = ["us", "ru"] значит us↔ru. Если pair длиннее (3+ раскладки),
@@ -362,6 +363,9 @@ async fn do_flip(
 
     // 3. Даём compositor'у применить.
     tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // 3.1. Синхронизируем наше xkb-состояние с системным
+    xkb.set_active_layout(target_index);
 
     // 4. Re-emit keycodes — теперь они дадут глифы новой раскладки.
     rewriter

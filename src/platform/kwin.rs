@@ -28,6 +28,8 @@ use zbus::{Connection, proxy};
 /// KDE же использует camelCase (`setLayout`, `getLayout`) — поэтому каждой
 /// функции нужен явный `name = "..."` атрибут. Открыли это smoke-тестом 2026-05-10:
 /// без `name` падало с `org.freedesktop.DBus.Error.UnknownMethod: SetLayout`.
+use futures_util::Stream;
+
 #[proxy(
     interface = "org.kde.KeyboardLayouts",
     default_service = "org.kde.keyboard",
@@ -48,6 +50,9 @@ trait KeyboardLayouts {
     /// Индекс в массиве == индекс который ждёт setLayout.
     #[zbus(name = "getLayoutsList")]
     fn get_layouts_list(&self) -> zbus::Result<Vec<(String, String, String)>>;
+
+    #[zbus(signal, name = "layoutChanged")]
+    fn layout_changed(&self, index: u32) -> zbus::Result<()>;
 }
 
 pub struct KwinLayout {
