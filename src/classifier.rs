@@ -221,7 +221,7 @@ pub enum Lang {
 /// к директории кеша.
 fn ensure_utf8_dicts() -> Result<String> {
     let dirs = directories::BaseDirs::new().context("BaseDirs::new")?;
-    let cache = dirs.data_local_dir().join("matea").join("dicts");
+    let cache = dirs.data_local_dir().join("matea-switcher").join("dicts");
     std::fs::create_dir_all(&cache).context("create cache dir")?;
 
     let en_aff = cache.join("en_US.aff");

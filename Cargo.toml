@@ -1,11 +1,11 @@
 [package]
-name = "matea"
+name = "matea-switcher"
 version = "0.1.0"
 edition = "2024"
 authors = ["creonuae"]
 description = "AI-powered keyboard layout switcher and input correction (RU/EN bilingual)"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/creonuae/MaTea"
+repository = "https://github.com/creonuae/matea-switcher"
 readme = "README.md"
 
 [dependencies]

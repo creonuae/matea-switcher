@@ -1,4 +1,4 @@
-# MaTea — agent onboarding
+# matea-switcher — agent onboarding
 
 > Этот файл — точка входа для любого AI-агента (Claude, Codex, Cursor, Gemini,
 > локальные LLM), который открывает репозиторий впервые. Универсальный
@@ -115,7 +115,7 @@ sudo dnf install libxkbcommon-devel hunspell-devel clang-devel \
 # Группа input для evdev:
 sudo usermod -aG input $USER  # перелогиниться
 
-cd ~/MaTea
+cd ~/matea-switcher
 cargo build --release
 cargo test                    # должно быть 15/15 ok
 

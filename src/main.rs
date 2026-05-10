@@ -13,7 +13,7 @@ mod platform;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     init_tracing();
-    info!("MaTea v{} starting", env!("CARGO_PKG_VERSION"));
+    info!("matea-switcher v{} starting", env!("CARGO_PKG_VERSION"));
 
     let cfg = config::load()?;
     info!(?cfg, "config loaded");
@@ -27,6 +27,6 @@ async fn main() -> Result<()> {
 fn init_tracing() {
     use tracing_subscriber::{EnvFilter, fmt};
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("matea=debug,info"));
+        .unwrap_or_else(|_| EnvFilter::new("matea_switcher=debug,info"));
     fmt().with_env_filter(filter).with_target(false).init();
 }

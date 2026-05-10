@@ -103,14 +103,14 @@ pub fn load() -> Result<Config> {
 
 fn config_path() -> Result<PathBuf> {
     let dirs = directories::BaseDirs::new().context("BaseDirs::new")?;
-    Ok(dirs.config_dir().join("matea").join("config.toml"))
+    Ok(dirs.config_dir().join("matea-switcher").join("config.toml"))
 }
 
 fn write_default(path: &std::path::Path, cfg: &Config) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).context("mkdir config dir")?;
     }
-    let header = "# matea config — см. AGENTS.md в репе для полного списка опций\n\
+    let header = "# matea-switcher config — см. AGENTS.md в репе для полного списка опций\n\
                   # Этот файл создан автоматически при первом запуске.\n\
                   # Удали — будет пересоздан с дефолтами.\n\n";
     let body = toml::to_string_pretty(cfg).context("serialize config")?;

@@ -535,7 +535,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "matea"
+name = "matea-switcher"
 version = "0.1.0"
 dependencies = [
  "anyhow",

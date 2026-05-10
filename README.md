@@ -1,4 +1,4 @@
-# MaTea
+# matea-switcher
 
 AI-powered keyboard layout switcher для билингвов RU↔EN. Цель — пользователь
 **вообще не думает о раскладке**: набрал «ghbdtn» — мгновенно стало «привет»,
@@ -78,8 +78,8 @@ matea
   ```
 
 ```bash
-git clone https://github.com/creonuae/MaTea.git
-cd MaTea
+git clone https://github.com/creonuae/matea-switcher.git
+cd matea-switcher
 cargo build --release
 ./target/release/matea
 ```

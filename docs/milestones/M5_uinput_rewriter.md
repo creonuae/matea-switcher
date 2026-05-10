@@ -153,7 +153,7 @@ groups | grep input  # должна быть group input
 ls -la /dev/uinput   # должно быть rw для group input
                      # (если нет — udev rule в TODO ниже)
 
-cd ~/MaTea
+cd ~/matea-switcher
 cargo build --release
 
 # Запуск (фон, лог в файл):

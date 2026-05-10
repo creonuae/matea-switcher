@@ -60,13 +60,13 @@ impl Rewriter {
 
         let device = VirtualDeviceBuilder::new()
             .context("uinput: create builder (нужен RW на /dev/uinput; обычно достаточно группы input)")?
-            .name("matea virtual keyboard")
+            .name("matea-switcher virtual keyboard")
             .with_keys(&keys)
             .context("uinput: with_keys")?
             .build()
             .context("uinput: build (если EACCES — проверь /dev/uinput права)")?;
 
-        info!("uinput virtual keyboard создан: matea virtual keyboard");
+        info!("uinput virtual keyboard создан: matea-switcher virtual keyboard");
         Ok(Self {
             device,
             pending_echo: None,
