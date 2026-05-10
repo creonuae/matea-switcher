@@ -19,6 +19,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 directories = "5"
+# Spellcheck. Привязки к C libhunspell (Fedora: hunspell-devel).
+# Альтернатива — pure-Rust spellbook, если будет проблема со сборкой.
+hunspell-rs = "0.4"
+# KOI8-R ↔ UTF-8 conversion для Fedora ru_RU словаря (он поставляется в KOI8-R,
+# а hunspell-rs API принимает UTF-8 строки; раз-конвертим при первом запуске).
+encoding_rs = "0.8"
 
 # Linux-specific (cfg-gated). На macOS/Windows подключим свои вместо этих.
 [target.'cfg(target_os = "linux")'.dependencies]

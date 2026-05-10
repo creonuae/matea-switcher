@@ -7,6 +7,7 @@ use tracing::{debug, info, warn};
 
 use super::Platform;
 use super::xkb::XkbTranslator;
+use crate::classifier::{ClassifyInput, DictClassifier, Verdict};
 use crate::context::{WordBuffer, is_word_boundary_char};
 
 /// Linux реализация (Wayland-first, X11 не поддерживаем).
@@ -61,6 +62,9 @@ impl Platform for LinuxPlatform {
     async fn run(&self) -> Result<()> {
         let mut xkb = XkbTranslator::new().context("init xkbcommon")?;
         let mut buffer = WordBuffer::default();
+        let classifier = DictClassifier::new_default()
+            .context("init Hunspell словарей (en_US + ru_RU)")?;
+        info!("classifier готов: en_US + ru_RU словари загружены");
 
         let (tx, mut rx) = mpsc::channel::<RawKeyEvent>(256);
 
@@ -99,7 +103,7 @@ impl Platform for LinuxPlatform {
         loop {
             tokio::select! {
                 Some(ev) = rx.recv() => {
-                    handle_event(&mut xkb, &mut buffer, &ev);
+                    handle_event(&mut xkb, &mut buffer, &classifier, &ev);
                 }
                 _ = tokio::signal::ctrl_c() => {
                     info!("получен Ctrl+C, завершаюсь");
@@ -120,8 +124,13 @@ impl Platform for LinuxPlatform {
 }
 
 /// Главный switch: обновляет xkb state, наполняет/режет WordBuffer, на word-boundary
-/// логирует завершённое слово.
-fn handle_event(xkb: &mut XkbTranslator, buffer: &mut WordBuffer, ev: &RawKeyEvent) {
+/// классифицирует слово через Hunspell и логирует Verdict.
+fn handle_event(
+    xkb: &mut XkbTranslator,
+    buffer: &mut WordBuffer,
+    classifier: &DictClassifier,
+    ev: &RawKeyEvent,
+) {
     if ev.pressed {
         // ВАЖНО: glyph и keysym берутся ДО update_key — для нажатого состояния
         let utf8 = xkb.key_to_utf8(ev.evdev_code);
@@ -151,11 +160,29 @@ fn handle_event(xkb: &mut XkbTranslator, buffer: &mut WordBuffer, ev: &RawKeyEve
                 if is_word_boundary_char(first) {
                     if !buffer.is_empty() {
                         let t = buffer.take();
+                        let verdict = classifier.classify(&ClassifyInput {
+                            word: &t.word,
+                            active_layout: &t.layout,
+                            recent_words: &[],
+                            window_class: None,
+                        });
+                        let verdict_str = match verdict {
+                            Verdict::Keep => "KEEP",
+                            Verdict::Flip => "FLIP",
+                            Verdict::Uncertain => "UNCERTAIN",
+                        };
+                        // Покажем что получится при flip — для debug-визуализации
+                        let flipped = match t.layout.as_str() {
+                            "us" => crate::mapper::en_to_ru(&t.word),
+                            "ru" => crate::mapper::ru_to_en(&t.word),
+                            _ => String::new(),
+                        };
                         info!(
                             word = %t.word,
+                            flipped = %flipped,
                             layout_started = %t.layout,
                             current_layout = layout,
-                            boundary = %first.escape_debug().to_string(),
+                            verdict = verdict_str,
                             "WORD"
                         );
                     }
