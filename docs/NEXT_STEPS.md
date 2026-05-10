@@ -459,6 +459,25 @@ on KWin activeWindowChanged(new_window):
 
 ---
 
+## Milestone 5d ✅ — EVIOCGRAB на время rewrite
+
+**Статус:** реализован 2026-05-10. На каждое `do_flip`:
+- `rewriter.grab_all()` пытается grab все клавиатуры (отдельные fd на тот же
+  device что reader держит — kernel-level grab блокирует events для всех
+  клиентов).
+- Юзерский ввод буферизуется в evdev пока мы делаем backspace+setLayout+replay.
+- `rewriter.ungrab_all()` после — буфер сливается клиентам.
+
+Закрывает race condition из M5c (юзерские символы между нашими шагами →
+мешанина). Если grab падает (конфликт с keyd) — graceful degradation:
+warning + продолжаем без атомарности.
+
+Детали — [`docs/milestones/M5d_eviocgrab.md`](milestones/M5d_eviocgrab.md).
+
+Live verification ещё нужна — после следующего smoke с быстрой печатью.
+
+---
+
 ## Milestone 11 ✅ — context bias через recent_words
 
 **Статус:** done на 2026-05-10. Когда Hunspell-проверка возвращает «обе

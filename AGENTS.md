@@ -18,19 +18,19 @@
   `docs/NEXT_STEPS.md` («Текущее состояние» + commit message `init`).
 - **Текущий статус v0.1:** done — M1 (evdev), M2 (xkbcommon), M3 (WordBuffer),
   M4 (Hunspell classifier), M5 (uinput rewriter + KWin layout switch),
-  M5b (dynamic layout index), M7 (classifier hardening), M8 (Ctrl+Shift+M
-  toggle), M9 (минимальный config.toml), M11 (context bias через recent_words).
-  Не done: **M6** (AT-SPI — editable-text + password detection + window
-  blacklist), M5c (wait for signal + EVIOCGRAB), M9b (реально применить
-  config-поля), M10 (systemd unit). Следующий приоритет — **M6**.
+  M5b (dynamic layout index), M5c (self-echo suppression),
+  **M5d (EVIOCGRAB атомарность rewrite)**, M7 (classifier hardening),
+  M8 (Ctrl+Shift+M toggle), M9 + M9b (config.toml + apply general.enabled),
+  M11 (context bias через recent_words). Не done: **M6** (AT-SPI —
+  editable-text + password detection + window blacklist), M9c (hotkey
+  parsing), M10 (systemd unit). Следующий приоритет — **M6** или
+  live-verification M5d.
 - **Аварийный stop**: пока нет M6, для остановки rewrite — **Ctrl+Shift+M**.
   matea продолжит логировать verdict, но FLIP-action будет пропущен.
-- **⚠️ КРИТИЧНОЕ известное ограничение** (live smoke 2026-05-10): без
-  `EVIOCGRAB` (M5d, не сделан) при быстрой печати (>5 знв/сек) FLIP-rewrite
-  имеет race с твоим вводом — символы юзера втыкаются между нашими backspace
-  и replay, получается мешанина. **Не запускай matea для реальной работы**
-  до M5d. Только slow-typed smoke в gedit. Подробнее —
-  `docs/milestones/M5c_self_echo_and_race.md`.
+- **M5d EVIOCGRAB** реализован — на время `do_flip` грабим клавиатуры,
+  юзерский ввод буферизуется до окончания rewrite. Live verification ещё
+  нужна. Если grab упал (конфликт с keyd на dev-машине) — graceful
+  degradation: warning + продолжаем без атомарности.
 - **15/15 unit-тестов зелёные.** `cargo test` после `cargo build --release`.
 
 ## Карта документов

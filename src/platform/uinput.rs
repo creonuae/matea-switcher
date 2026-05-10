@@ -16,33 +16,34 @@
 //!     заново. Они переинтерпретируются compositor'ом в новой раскладке и дают
 //!     корректные глифы. Никакого ручного char→keycode reverse-mapping не нужно.
 //!
-//! WHY EVIOCGRAB опционален:
-//!   - На системе пользователя стоит keyd, который сам грабит physical клаву и
-//!     создаёт virtual. Если matea ещё раз grab'ит keyd's virtual — конфликт.
-//!   - В v0.1 идём без grab'а. Race condition (юзер успевает нажать клавишу
-//!     посреди rewrite) принимаем — это вопрос на M5b (короткая блокировка
-//!     через grab keyd-virtual именно перед emit).
+//! WHY EVIOCGRAB на источниках events во время rewrite (M5d):
+//!   - Без grab между нашим backspace и replay юзер успевает напечатать новые
+//!     символы. Они попадают в окно посреди rewrite → мешанина (наблюдалось
+//!     2026-05-10 — `mctuj` от смеси нашего `всего` и юзерского `m`).
+//!   - EVIOCGRAB на keyboard fd блокирует ВСЕХ клиентов (включая reader) от
+//!     получения events. На время grab'а юзер «печатает в пустоту»
+//!     (события буферизуются в evdev и приходят после ungrab).
+//!   - Открытый вопрос с keyd: keyd сам grab'ит physical клаву. Наш grab на
+//!     keyd virtual (event15) — отдельная цепочка, не должен конфликтовать.
+//!     Если конфликт всё-таки — graceful degradation: warning + продолжаем
+//!     без grab (старое поведение M5).
 
 use anyhow::{Context, Result};
 use evdev::uinput::{VirtualDevice, VirtualDeviceBuilder};
-use evdev::{AttributeSet, EventType, InputEvent, KeyCode};
+use evdev::{AttributeSet, Device, EventType, InputEvent, KeyCode};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
-/// Единая virtual-клавиатура matea, используется для emit corrections.
+/// Единая virtual-клавиатура matea-switcher для emit corrections + дополнительные
+/// handles на физические/виртуальные клавы для EVIOCGRAB на время rewrite.
 ///
-/// Tracking self-echo: keyd на этой системе grab'ит ВСЕ клавиатуры (включая
-/// наш matea virtual keyboard) и шлёт events обратно через keyd virtual. Наш
-/// `discover_keyboards` фильтрует устройства с "matea" в имени, но keyd
-/// virtual в имени matea не содержит → events наших rewrites возвращаются и
-/// reader их видит как user input → self-loop, хаос.
-///
-/// Решение: после каждого emit запоминаем (timestamp, expected_echo_count).
-/// reader перед обработкой каждого press-event спрашивает
-/// `maybe_consume_self_echo()` — если да (echo окно ещё не истекло, counter > 0),
-/// event пропускается и counter--.
+/// **pending_echo** — second line of defense на случай если grab упал/частичный:
+/// keyd может пропустить наши emit'ы через свою virtual обратно к нам, мы
+/// игнорируем по counter (см. `maybe_consume_self_echo`).
 pub struct Rewriter {
     device: VirtualDevice,
+    grab_devices: Vec<Device>,
     pending_echo: Option<(Instant, usize)>,
 }
 
@@ -52,7 +53,7 @@ impl Rewriter {
     /// Создать virtual keyboard `matea` с full keymap. После этого в системе
     /// появляется `/dev/input/event<N>` с этим именем — приложения видят его как
     /// обычную клаву.
-    pub fn new() -> Result<Self> {
+    pub fn new(grab_paths: Vec<PathBuf>) -> Result<Self> {
         let mut keys = AttributeSet::<KeyCode>::new();
         for code in 1..=255u16 {
             keys.insert(KeyCode::new(code));
@@ -66,11 +67,48 @@ impl Rewriter {
             .build()
             .context("uinput: build (если EACCES — проверь /dev/uinput права)")?;
 
-        info!("uinput virtual keyboard создан: matea-switcher virtual keyboard");
+        // Дополнительные handles на target клавы — нужны для EVIOCGRAB. Это
+        // ОТДЕЛЬНЫЕ fd от тех что reader держит open для чтения; grab на нашем
+        // fd блокирует events и для reader'а тоже (kernel-level).
+        let mut grab_devices = Vec::new();
+        for path in &grab_paths {
+            match Device::open(path) {
+                Ok(dev) => grab_devices.push(dev),
+                Err(e) => warn!(path = %path.display(), err = %e, "не удалось open для grab — этот источник не будет блокироваться"),
+            }
+        }
+
+        info!(
+            grab_targets = grab_devices.len(),
+            "uinput virtual keyboard создан: matea-switcher virtual keyboard"
+        );
         Ok(Self {
             device,
+            grab_devices,
             pending_echo: None,
         })
+    }
+
+    /// EVIOCGRAB на всех target devices. Возвращает количество успешно
+    /// захваченных. После grab все остальные клиенты этих устройств перестают
+    /// получать events до ungrab.
+    pub fn grab_all(&mut self) -> usize {
+        let mut grabbed = 0;
+        for dev in &mut self.grab_devices {
+            match dev.grab() {
+                Ok(()) => grabbed += 1,
+                Err(e) => debug!(err = %e, "grab failed (вероятно keyd конфликт или уже grabbed)"),
+            }
+        }
+        debug!(grabbed, total = self.grab_devices.len(), "grab_all");
+        grabbed
+    }
+
+    pub fn ungrab_all(&mut self) {
+        for dev in &mut self.grab_devices {
+            let _ = dev.ungrab();
+        }
+        debug!("ungrab_all");
     }
 
     /// Reader спрашивает: «текущий press-event — это echo нашего собственного

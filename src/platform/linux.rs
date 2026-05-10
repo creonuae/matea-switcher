@@ -67,7 +67,12 @@ impl Platform for LinuxPlatform {
             .context("init Hunspell словарей (en_US + ru_RU)")?;
         info!("classifier готов: en_US + ru_RU словари загружены");
 
-        let mut rewriter = Rewriter::new().context("init uinput rewriter")?;
+        // Список путей клавиатур передаём в Rewriter — там же будут открыты
+        // отдельные fd для EVIOCGRAB на время do_flip (M5d). reader продолжает
+        // держать свои fd; grab на наших новых fd блокирует events для всех
+        // клиентов, в т.ч. reader'а (kernel-level), что закрывает race.
+        let grab_paths: Vec<_> = self.keyboards.iter().map(|k| k.path.clone()).collect();
+        let mut rewriter = Rewriter::new(grab_paths).context("init uinput rewriter")?;
         let kwin = KwinLayout::new()
             .await
             .context("init KWin layout DBus client")?;
@@ -310,6 +315,14 @@ async fn do_flip(rewriter: &mut Rewriter, kwin: &KwinLayout, t: &crate::context:
         "FLIP: переписываю"
     );
 
+    // M5d: EVIOCGRAB на все клавы перед rewrite. Юзерский ввод буферизуется
+    // в evdev пока мы не отпустим — это закрывает race condition (юзерские
+    // символы не вставляются между нашими backspace и replay).
+    let grabbed = rewriter.grab_all();
+    if grabbed == 0 {
+        warn!("grab_all не сработал ни на одной клавиатуре — race окно открыто");
+    }
+
     // 1. Стираем то что юзер уже напечатал.
     rewriter
         .backspace(t.keycodes.len())
@@ -328,6 +341,10 @@ async fn do_flip(rewriter: &mut Rewriter, kwin: &KwinLayout, t: &crate::context:
     rewriter
         .replay_keycodes(&t.keycodes)
         .context("flip: replay")?;
+
+    // 5. Release grab — юзер снова может печатать. Буферизованные events
+    // (если он что-то нажал во время grab) придут к reader'у сейчас.
+    rewriter.ungrab_all();
 
     Ok(())
 }
