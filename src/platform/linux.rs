@@ -85,6 +85,12 @@ impl Platform for LinuxPlatform {
         let focus_rx = spawn_atspi_listener();
         info!("AT-SPI listener spawned (focus tracking + password/blacklist guard)");
 
+        // T1: подписываемся на org.kde.keyboard.layoutChanged
+        let mut layout_watch = kwin.watch_layout_changes()
+            .await
+            .context("subscribe org.kde.keyboard.layoutChanged")?;
+        info!("KWin layoutChanged subscription активна");
+
         // M8: глобальный enabled-flag и tracking modifier-state. Aварийный
         // hotkey Ctrl+Shift+M toggle'ит rewrite ON/OFF (classifier продолжает
         // работать и логировать, но FLIP-action пропускается). Если matea сходит
@@ -149,6 +155,11 @@ impl Platform for LinuxPlatform {
                     if let Err(e) = handle_event(&mut xkb, &mut buffer, &mut history, &classifier, &mut rewriter, &kwin, &cfg.layouts.pair, &focus_ctx, &ev, enabled).await {
                         warn!("handle_event error: {e:#}");
                     }
+                }
+                Ok(()) = layout_watch.changed() => {
+                    let new_group = *layout_watch.borrow();
+                    xkb.set_active_layout(new_group);
+                    debug!(group = new_group, "xkb-state synced from KWin layoutChanged");
                 }
                 _ = tokio::signal::ctrl_c() => {
                     info!("получен Ctrl+C, завершаюсь");
@@ -262,7 +273,7 @@ async fn handle_event(
                                 );
                                 history.push(t.word.clone());
                             } else {
-                                do_flip(rewriter, kwin, pair, &t).await?;
+                                do_flip(rewriter, kwin, pair, &t, xkb).await?;
                                 // После flip — в history идёт flipped (юзер видит его).
                                 history.push(flipped.clone());
                             }
@@ -315,6 +326,7 @@ async fn do_flip(
     kwin: &KwinLayout,
     pair: &[String],
     t: &crate::context::TakenWord,
+    xkb: &mut XkbTranslator,
 ) -> Result<()> {
     // M9c: target_layout определяем по cfg.layouts.pair (динамически).
     // pair = ["us", "ru"] значит us↔ru. Если pair длиннее (3+ раскладки),
@@ -362,6 +374,9 @@ async fn do_flip(
 
     // 3. Даём compositor'у применить.
     tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // 3.1. Синхронизируем наше xkb-состояние с системным
+    xkb.set_active_layout(target_index);
 
     // 4. Re-emit keycodes — теперь они дадут глифы новой раскладки.
     rewriter

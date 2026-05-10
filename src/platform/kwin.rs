@@ -20,7 +20,9 @@
 //!     re-emit бы дал тот же текст. Нужно дёргать именно KWin'овский layout.
 
 use anyhow::{Context, Result};
+use futures_lite::stream::StreamExt;
 use std::collections::HashMap;
+use tokio::sync::watch;
 use tracing::{debug, info};
 use zbus::{Connection, proxy};
 
@@ -48,6 +50,9 @@ trait KeyboardLayouts {
     /// Индекс в массиве == индекс который ждёт setLayout.
     #[zbus(name = "getLayoutsList")]
     fn get_layouts_list(&self) -> zbus::Result<Vec<(String, String, String)>>;
+
+    #[zbus(signal, name = "layoutChanged")]
+    fn layout_changed(&self, index: u32) -> zbus::Result<()>;
 }
 
 pub struct KwinLayout {
@@ -106,9 +111,25 @@ impl KwinLayout {
         self.proxy.set_layout(index).await.context("setLayout")
     }
 
-    /// Switch to next в LayoutList. Простая альтернатива set(target_index)
-    /// если у нас 2 layouts и достаточно «другая».
-    pub async fn switch_next(&self) -> Result<()> {
-        self.proxy.switch_to_next_layout().await.context("switchToNextLayout")
+    /// Subscribe на layoutChanged. Возвращает channel с current group:
+    /// каждый раз когда compositor меняет layout (наш setLayout, юзерский
+    /// Alt+Space, panel widget click) — отправляется новый group index.
+    /// Receiver'у нужно: на каждое значение вызвать xkb.set_active_layout(g).
+    pub async fn watch_layout_changes(
+        &self,
+    ) -> Result<tokio::sync::watch::Receiver<u32>> {
+        let initial = self.current().await.unwrap_or(0);
+        let (tx, rx) = tokio::sync::watch::channel(initial);
+        let mut signal_stream = self.proxy.receive_layout_changed().await?;
+
+        tokio::task::spawn(async move {
+            while let Some(sig) = signal_stream.next().await {
+                if let Ok(args) = sig.args() {
+                    let _ = tx.send(args.index);
+                }
+            }
+        });
+
+        Ok(rx)
     }
 }
