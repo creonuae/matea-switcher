@@ -26,12 +26,27 @@
 use anyhow::{Context, Result};
 use evdev::uinput::{VirtualDevice, VirtualDeviceBuilder};
 use evdev::{AttributeSet, EventType, InputEvent, KeyCode};
+use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
 /// Единая virtual-клавиатура matea, используется для emit corrections.
+///
+/// Tracking self-echo: keyd на этой системе grab'ит ВСЕ клавиатуры (включая
+/// наш matea virtual keyboard) и шлёт events обратно через keyd virtual. Наш
+/// `discover_keyboards` фильтрует устройства с "matea" в имени, но keyd
+/// virtual в имени matea не содержит → events наших rewrites возвращаются и
+/// reader их видит как user input → self-loop, хаос.
+///
+/// Решение: после каждого emit запоминаем (timestamp, expected_echo_count).
+/// reader перед обработкой каждого press-event спрашивает
+/// `maybe_consume_self_echo()` — если да (echo окно ещё не истекло, counter > 0),
+/// event пропускается и counter--.
 pub struct Rewriter {
     device: VirtualDevice,
+    pending_echo: Option<(Instant, usize)>,
 }
+
+const SELF_ECHO_WINDOW: Duration = Duration::from_millis(500);
 
 impl Rewriter {
     /// Создать virtual keyboard `matea` с full keymap. После этого в системе
@@ -39,8 +54,6 @@ impl Rewriter {
     /// обычную клаву.
     pub fn new() -> Result<Self> {
         let mut keys = AttributeSet::<KeyCode>::new();
-        // Объявляем поддержку всех «обычных» key-codes (1..=255 покрывает буквы,
-        // цифры, modifiers, punkt, F-клавиши, multimedia). 0 — KEY_RESERVED, skip.
         for code in 1..=255u16 {
             keys.insert(KeyCode::new(code));
         }
@@ -54,7 +67,41 @@ impl Rewriter {
             .context("uinput: build (если EACCES — проверь /dev/uinput права)")?;
 
         info!("uinput virtual keyboard создан: matea virtual keyboard");
-        Ok(Self { device })
+        Ok(Self {
+            device,
+            pending_echo: None,
+        })
+    }
+
+    /// Reader спрашивает: «текущий press-event — это echo нашего собственного
+    /// rewrite, который через keyd virtual keyboard вернулся к нам?»
+    ///
+    /// Возвращает true — игнорируй event. Возвращает false — обычный user input.
+    /// Decrement'ит counter после каждого true. По истечении SELF_ECHO_WINDOW
+    /// сбрасывает state (эхо могло потеряться, не висим вечно).
+    pub fn maybe_consume_self_echo(&mut self) -> bool {
+        if let Some((ts, count)) = self.pending_echo {
+            if ts.elapsed() > SELF_ECHO_WINDOW {
+                self.pending_echo = None;
+                return false;
+            }
+            if count > 0 {
+                self.pending_echo = Some((ts, count - 1));
+                return true;
+            }
+        }
+        false
+    }
+
+    fn arm_self_echo(&mut self, count: usize) {
+        // Если предыдущая порция echo не успела догнаться — суммируем; в худшем
+        // случае пропустим лишний user input в течение window, но это безопаснее
+        // чем пропустить наш собственный echo и зациклить rewrite.
+        let prev = match self.pending_echo {
+            Some((_, c)) => c,
+            None => 0,
+        };
+        self.pending_echo = Some((Instant::now(), prev + count));
     }
 
     /// Эмитим одно нажатие+отпускание keycode'а. SYN_REPORT шлёт evdev сам в emit().
@@ -67,24 +114,25 @@ impl Rewriter {
         Ok(())
     }
 
-    /// Backspace × n.
+    /// Backspace × n. Arm'ит self-echo counter ровно на n.
     pub fn backspace(&mut self, n: usize) -> Result<()> {
-        // KEY_BACKSPACE = 14
         let bs = KeyCode::KEY_BACKSPACE.code();
         debug!(n, "uinput: backspace");
         for _ in 0..n {
             self.tap(bs)?;
         }
+        self.arm_self_echo(n);
         Ok(())
     }
 
-    /// Re-emit последовательности keycodes (которые юзер уже нажимал). Compositor
-    /// проинтерпретирует их с учётом текущей системной раскладки.
+    /// Re-emit последовательности keycodes (которые юзер уже нажимал). Arm'ит
+    /// self-echo counter ровно на len(keycodes).
     pub fn replay_keycodes(&mut self, keycodes: &[u16]) -> Result<()> {
         debug!(?keycodes, "uinput: replay");
         for &kc in keycodes {
             self.tap(kc)?;
         }
+        self.arm_self_echo(keycodes.len());
         Ok(())
     }
 }

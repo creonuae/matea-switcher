@@ -167,6 +167,17 @@ async fn handle_event(
     ev: &RawKeyEvent,
     enabled: bool,
 ) -> Result<()> {
+    // M5c: если этот press — echo нашего собственного rewrite (через keyd
+    // virtual keyboard вернулся к нам), пропускаем без обработки. Без этого
+    // self-loop: наши emit'ы попадают в WordBuffer и вызывают новый FLIP →
+    // повторный rewrite → ещё больше echo → хаос (наблюдалось в smoke 05:42).
+    if ev.pressed && rewriter.maybe_consume_self_echo() {
+        debug!(keycode = ?ev.key, "ignored self-echo");
+        // Всё равно обновим xkb state — чтобы modifier/group учёт не отстал.
+        xkb.update_key(ev.evdev_code, true);
+        return Ok(());
+    }
+
     if ev.pressed {
         let utf8 = xkb.key_to_utf8(ev.evdev_code);
         let keysym_name = xkb.key_to_keysym_name(ev.evdev_code);
