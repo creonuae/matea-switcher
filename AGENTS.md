@@ -25,6 +25,12 @@
   config-поля), M10 (systemd unit). Следующий приоритет — **M6**.
 - **Аварийный stop**: пока нет M6, для остановки rewrite — **Ctrl+Shift+M**.
   matea продолжит логировать verdict, но FLIP-action будет пропущен.
+- **⚠️ КРИТИЧНОЕ известное ограничение** (live smoke 2026-05-10): без
+  `EVIOCGRAB` (M5d, не сделан) при быстрой печати (>5 знв/сек) FLIP-rewrite
+  имеет race с твоим вводом — символы юзера втыкаются между нашими backspace
+  и replay, получается мешанина. **Не запускай matea для реальной работы**
+  до M5d. Только slow-typed smoke в gedit. Подробнее —
+  `docs/milestones/M5c_self_echo_and_race.md`.
 - **15/15 unit-тестов зелёные.** `cargo test` после `cargo build --release`.
 
 ## Карта документов
