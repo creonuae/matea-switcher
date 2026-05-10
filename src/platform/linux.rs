@@ -59,7 +59,7 @@ impl Platform for LinuxPlatform {
         "linux (Wayland)"
     }
 
-    async fn run(&self) -> Result<()> {
+    async fn run(&self, cfg: &crate::config::Config) -> Result<()> {
         let mut xkb = XkbTranslator::new().context("init xkbcommon")?;
         let mut buffer = WordBuffer::default();
         let mut history = WordHistory::new(10);
@@ -77,10 +77,14 @@ impl Platform for LinuxPlatform {
         // hotkey Ctrl+Shift+M toggle'ит rewrite ON/OFF (classifier продолжает
         // работать и логировать, но FLIP-action пропускается). Если matea сходит
         // с ума или попадаешь в окно где она опасна — нажми Ctrl+Shift+M.
-        let mut enabled: bool = true;
+        let mut enabled: bool = cfg.general.enabled;
         let mut ctrl_pressed = false;
         let mut shift_pressed = false;
-        info!("hotkey: Ctrl+Shift+M — toggle rewrite ON/OFF (classifier продолжает крутиться)");
+        info!(
+            initial_enabled = enabled,
+            toggle_hotkey = %cfg.hotkeys.toggle,
+            "hotkey: Ctrl+Shift+M — toggle rewrite ON/OFF (classifier продолжает крутиться)"
+        );
 
         let (tx, mut rx) = mpsc::channel::<RawKeyEvent>(256);
 

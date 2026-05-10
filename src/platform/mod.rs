@@ -1,6 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
+use crate::config::Config;
+
 #[cfg(target_os = "linux")]
 mod kwin;
 #[cfg(target_os = "linux")]
@@ -28,7 +30,7 @@ pub trait Platform {
 
     /// Запустить event loop. Платформа сама читает клавиши, дёргает классификатор
     /// и пишет коррекции обратно. Возвращается на graceful shutdown (Ctrl+C / SIGTERM).
-    async fn run(&self) -> Result<()>;
+    async fn run(&self, cfg: &Config) -> Result<()>;
 }
 
 pub async fn current() -> Result<Box<dyn Platform>> {

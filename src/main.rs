@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
 
     let platform = platform::current().await?;
     info!("platform: {}", platform.name());
-    platform.run().await?;
+    platform.run(&cfg).await?;
     Ok(())
 }
 
