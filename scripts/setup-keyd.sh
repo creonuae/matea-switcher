@@ -35,11 +35,22 @@ echo "--- $CONFIG после изменения ---"
 cat "$CONFIG"
 echo "---"
 
-systemctl reload keyd
+# keyd unit на разных дистрибутивах не всегда поддерживает 'reload' (нет
+# ExecReload= директивы). Сначала пробуем reload (soft, без обрыва текущих
+# grab'ов), при неудаче — restart.
+if systemctl reload keyd 2>/dev/null; then
+    echo "OK: keyd reload прошёл."
+elif systemctl restart keyd; then
+    echo "OK: keyd restart прошёл (reload не поддержан unit'ом)."
+else
+    echo "ERROR: keyd reload и restart провалились. journalctl -u keyd -n 20"
+    exit 1
+fi
+
 sleep 1
 if systemctl is-active --quiet keyd; then
-    echo "OK: keyd reload прошёл, статус active."
+    echo "OK: keyd active после применения изменений."
 else
-    echo "WARN: keyd reload вернул не-active. Проверь: journalctl -u keyd -n 20"
+    echo "WARN: keyd не active после reload/restart. journalctl -u keyd -n 20"
     exit 1
 fi
