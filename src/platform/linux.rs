@@ -8,6 +8,7 @@ use tracing::{debug, info, warn};
 
 use super::Platform;
 use super::atspi::{spawn_listener as spawn_atspi_listener, FocusContext};
+use super::keyd_detect::warn_if_keyd_active;
 use super::kwin::KwinLayout;
 use super::uinput::Rewriter;
 use super::xkb::XkbTranslator;
@@ -50,6 +51,14 @@ impl LinuxPlatform {
         for kb in &keyboards {
             info!("  • {} ({})", kb.name, kb.path.display());
         }
+
+        // M-keyd: keyd на dev-машинах подписывается на наш virtual keyboard и
+        // пере-эмитит наши uinput events через свою virtual → echo-loop, юзер
+        // видит дубли. Custom vendor/product ID (0x6d61:0x7465 в Rewriter)
+        // позволяет юзеру блэклистить нас в keyd config. Здесь только
+        // печатаем warning если keyd обнаружен.
+        warn_if_keyd_active();
+
         Ok(Self { keyboards })
     }
 }

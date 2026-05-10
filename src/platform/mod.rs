@@ -6,6 +6,8 @@ use crate::config::Config;
 #[cfg(target_os = "linux")]
 mod atspi;
 #[cfg(target_os = "linux")]
+mod keyd_detect;
+#[cfg(target_os = "linux")]
 mod kwin;
 #[cfg(target_os = "linux")]
 mod linux;

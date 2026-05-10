@@ -110,6 +110,14 @@ journalctl --user -u matea-switcher -f
 **Аварийный stop переписывания** (без stop'а демона) — `Ctrl+Shift+M` в
 любом окне. Hotkey настраивается в config.
 
+## Если у тебя keyd
+
+`keyd` (популярный Linux remapper клавиатуры) по дефолту обрабатывает
+**все** virtual keyboards включая наш. Это создаёт echo-loop и дубли
+символов в окне после FLIP. **Один раз** добавь блок в keyd-конфиг —
+см. [`docs/keyd-setup.md`](docs/keyd-setup.md). Без этого matea-switcher
+работать будет, но юзер будет видеть `давайдавай` вместо `давай`.
+
 ## Privacy
 
 Весь анализ текста (классификация раскладки, контекст экрана для proactive

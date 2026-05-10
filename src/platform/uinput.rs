@@ -30,10 +30,27 @@
 
 use anyhow::{Context, Result};
 use evdev::uinput::{VirtualDevice, VirtualDeviceBuilder};
-use evdev::{AttributeSet, Device, EventType, InputEvent, KeyCode};
+use evdev::{AttributeSet, BusType, Device, EventType, InputEvent, InputId, KeyCode};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
+
+/// Custom vendor/product ID для нашей virtual keyboard. Юзеры с keyd
+/// используют эти hex-значения чтобы блэклистить matea в keyd config:
+///
+///   ~/.config/keyd/default.conf:
+///   [ids]
+///   -6d61:7465
+///
+/// Без этого keyd обрабатывает наши uinput-emit'ы и пере-эмитит их через
+/// свою virtual keyboard — compositor видит дубль, юзер видит дубль слов
+/// в окне. См. docs/keyd-setup.md.
+///
+/// Значения выбраны как ASCII-коды букв «ma» (0x6d61) и «te» (0x7465) — для
+/// memorability. BUS_VIRTUAL (0x06) точнее по семантике чем BUS_USB.
+const MATEA_VENDOR_ID: u16 = 0x6d61;
+const MATEA_PRODUCT_ID: u16 = 0x7465;
+const MATEA_VERSION: u16 = 0x0001;
 
 /// Единая virtual-клавиатура matea-switcher для emit corrections + дополнительные
 /// handles на физические/виртуальные клавы для EVIOCGRAB на время rewrite.
@@ -59,9 +76,15 @@ impl Rewriter {
             keys.insert(KeyCode::new(code));
         }
 
+        // BUS_VIRTUAL=0x06 — точное обозначение для programmatic-only клав.
+        // BusType публичный конструктор отсутствует; используем from(u16).
+        let bus_virtual = BusType(0x06);
+        let id = InputId::new(bus_virtual, MATEA_VENDOR_ID, MATEA_PRODUCT_ID, MATEA_VERSION);
+
         let device = VirtualDeviceBuilder::new()
             .context("uinput: create builder (нужен RW на /dev/uinput; обычно достаточно группы input)")?
             .name("matea-switcher virtual keyboard")
+            .input_id(id)
             .with_keys(&keys)
             .context("uinput: with_keys")?
             .build()
