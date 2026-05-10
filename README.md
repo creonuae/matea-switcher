@@ -13,7 +13,18 @@ AI-powered keyboard layout switcher для билингвов RU↔EN. Цель 
 
 ## Статус
 
-🚧 v0.1 — early dev. Скелет проекта, базовые модули, заглушки.
+🚧 v0.1 — milestones M1-M4 готовы (evdev reader, xkbcommon, WordBuffer,
+Hunspell classifier). Следующий — M5: uinput rewriter. matea сейчас умеет
+**слушать** клавиатуру и говорить «надо ли переключить раскладку», но ещё
+не **переписывает** ввод.
+
+## Для AI-агентов / contributors
+
+Точка входа — [`AGENTS.md`](AGENTS.md) (universal формат) и
+[`CLAUDE.md`](CLAUDE.md) для Claude Code. Полный план дальнейшей работы —
+[`docs/NEXT_STEPS.md`](docs/NEXT_STEPS.md). Архитектура —
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Не повторяйте research,
+не переоткрывайте решения — всё load-bearing зафиксировано в этих файлах.
 
 ## Roadmap
 
